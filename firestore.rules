@@ -1,0 +1,12 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Reglas de seguridad para Vivo
+    // Mismo proyecto Firebase que NutriMinerals
+    // Permitimos lectura/escritura sin expiración para evitar bloqueo test-mode
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
