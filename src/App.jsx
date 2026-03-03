@@ -11,6 +11,7 @@ import { fetchVivoAnalysis } from './services/geminiService';
 import { calculateIEA } from './engine/ieaEngine';
 import { calculateDecision } from './engine/decisionEngine';
 import { getDailyRecommendation } from './engine/recommendationEngine';
+import { PLAN as MESOCYCLE_PLAN } from './services/mesocycleService';
 
 // Components
 import Semaphore from './components/Semaphore';
@@ -206,28 +207,69 @@ function App() {
         }
     }, [weeklyPlan]);
 
+    const [aiError, setAiError] = useState(null);
+
     const requestAIAnalysis = useCallback(async () => {
-        if (!intervalsData || !iea) return;
+        console.log('[Vivo AI] requestAIAnalysis called. intervalsData:', !!intervalsData, 'iea:', !!iea);
+        setAiError(null);
+
+        // If data not ready, try loading first
+        if (!intervalsData) {
+            console.warn('[Vivo AI] No intervalsData — attempting reload');
+            setAiError('Cargando tus datos biométricos... Inténtalo de nuevo en unos segundos.');
+            try { await loadIntervals(true); } catch { }
+            return;
+        }
+        if (!iea) {
+            setAiError('Los datos aún se están procesando. Espera unos segundos e inténtalo de nuevo.');
+            return;
+        }
+
         setAiLoading(true);
 
-        const todayISO = new Date().toLocaleDateString('sv');
+        const today = new Date();
+        const todayISO = today.toLocaleDateString('sv');
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowISO = tomorrow.toLocaleDateString('sv');
+
         const plannedType = weeklyPlan[todayISO];
-        const plannedSession = plannedType ? {
-            type: plannedType,
-            duration: plannedType === 'Rest' ? '-' : plannedType === 'Gym' ? '60 min' : '90 min',
-            goal: plannedType === 'SST' ? 'Progresión Densidad' : plannedType === 'Z2' ? 'Base Aeróbica' : 'Mantenimiento'
+        const mesoToday = MESOCYCLE_PLAN[todayISO];
+        const effectiveTodayType = mesoToday?.type || plannedType || null;
+        const plannedSession = effectiveTodayType ? {
+            type: effectiveTodayType,
+            title: mesoToday?.title || effectiveTodayType,
+            desc: mesoToday?.desc || '',
+            duration: mesoToday?.duration || (effectiveTodayType === 'Descanso' || effectiveTodayType === 'Rest' ? '-' : effectiveTodayType === 'Gym' ? '60 min' : '90 min'),
+            goal: mesoToday?.goal || (effectiveTodayType === 'Descanso' || effectiveTodayType === 'Rest' ? 'Recuperación completa' : effectiveTodayType === 'SST' ? 'Progresión Densidad' : effectiveTodayType === 'Z2' ? 'Base Aeróbica' : 'Mantenimiento')
         } : null;
 
+        const tomorrowType = weeklyPlan[tomorrowISO];
+        const mesoTomorrow = MESOCYCLE_PLAN[tomorrowISO];
+        const effectiveTomorrowType = mesoTomorrow?.type || tomorrowType || null;
+        const tomorrowSession = effectiveTomorrowType ? {
+            type: effectiveTomorrowType,
+            title: mesoTomorrow?.title || effectiveTomorrowType,
+            desc: mesoTomorrow?.desc || '',
+            duration: mesoTomorrow?.duration || (effectiveTomorrowType === 'Descanso' || effectiveTomorrowType === 'Rest' ? '-' : effectiveTomorrowType === 'Gym' ? '60 min' : '90 min'),
+            goal: mesoTomorrow?.goal || (effectiveTomorrowType === 'Descanso' || effectiveTomorrowType === 'Rest' ? 'Recuperación' : effectiveTomorrowType === 'SST' ? 'Progresión Densidad' : effectiveTomorrowType === 'Z2' ? 'Base Aeróbica' : 'Mantenimiento')
+        } : null;
+
+        console.log('[Vivo AI] Today:', todayISO, effectiveTodayType);
+        console.log('[Vivo AI] Tomorrow:', tomorrowISO, effectiveTomorrowType);
+
         try {
-            const result = await fetchVivoAnalysis(iea, intervalsData, symptoms, electrolytes, plannedSession);
+            const result = await fetchVivoAnalysis(iea, intervalsData, symptoms, electrolytes, plannedSession, tomorrowSession);
+            console.log('[Vivo AI] ✅ Analysis received, length:', result?.length);
             setAiAnalysis(result);
             saveDailyData({ aiAnalysis: result });
         } catch (e) {
             console.error('[Vivo] AI error:', e);
+            setAiError(`Error de IA: ${e.message}. Comprueba tu conexión e inténtalo de nuevo.`);
         } finally {
             setAiLoading(false);
         }
-    }, [intervalsData, iea, symptoms, electrolytes, weeklyPlan, saveDailyData]);
+    }, [intervalsData, iea, symptoms, electrolytes, weeklyPlan, saveDailyData, loadIntervals]);
 
     const toggleFullscreen = () => {
         if (!document.fullscreenElement) {
@@ -377,7 +419,7 @@ function App() {
                 );
 
             case 'ai':
-                return <AIAnalysis analysis={aiAnalysis} isLoading={aiLoading} onRequestAnalysis={requestAIAnalysis} />;
+                return <AIAnalysis analysis={aiAnalysis} isLoading={aiLoading} onRequestAnalysis={requestAIAnalysis} iea={iea} intervalsData={intervalsData} error={aiError} />;
             case 'coach':
                 return <CoachHub intervalsData={intervalsData} dailyRecommendation={dailyRecommendation} weeklyPlan={weeklyPlan} onUpdatePlan={handleUpdateWeeklyPlan} />;
             default: return null;

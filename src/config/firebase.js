@@ -19,6 +19,8 @@ export const auth = getAuth(app);
 // App constants
 export const APP_ID = 'vivo_app';
 export const SHARED_USER_ID = 'lFxF03U8OjgJo8teUltrcKjAGPJ2';
-export const GEMINI_API_KEY = "AIzaSyDEnFz3Iy90UJ3XNCXRW5TUr2GAFEbGkCk";
 export const ATHLETE_ID = 'i10474';
-export const INTERVALS_API_KEY = '27i9azt55smmhvg1ogc5gmn7x';
+
+// API keys — loaded from .env (NEVER hardcode here)
+export const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+export const INTERVALS_API_KEY = import.meta.env.VITE_INTERVALS_API_KEY || '';

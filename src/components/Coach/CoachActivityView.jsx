@@ -125,6 +125,16 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
     const hasCompletedActivity = useMemo(() => {
         return todayData?.activities?.length > 0 && todayData.activities.some(a => (a.icu_training_load || a.tss || 0) > 0);
     }, [todayData]);
+
+    // Detect if selected (past) day has a completed activity
+    const selectedDayData = useMemo(() => {
+        if (!intervalsData || !Array.isArray(intervalsData) || selectedDate === todayStr) return null;
+        return intervalsData.find(d => d.id === selectedDate || d.date === selectedDate) || null;
+    }, [intervalsData, selectedDate, todayStr]);
+
+    const selectedDayHasActivity = useMemo(() => {
+        return selectedDayData?.activities?.length > 0 && selectedDayData.activities.some(a => (a.icu_training_load || a.tss || 0) > 0);
+    }, [selectedDayData]);
     const [sendingEsqueleto, setSendingEsqueleto] = useState(false);
     const [sentSuccess, setSentSuccess] = useState(false);
     const [sessionWeights, setSessionWeights] = useState({});
@@ -251,10 +261,28 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
         <div className="copilot-container stagger">
             <MasterPlanModal isOpen={showMasterPlan} onClose={() => setShowMasterPlan(false)} />
 
-            {/* POST-WORKOUT ANALYSIS (when activity detected today) */}
-            {hasCompletedActivity && (
+            {/* POST-WORKOUT ANALYSIS — today or selected past day */}
+            {(hasCompletedActivity && selectedDate === todayStr) && (
                 <div style={{ marginBottom: '1rem' }}>
-                    <CoachPostWorkoutView todayData={todayData} />
+                    <CoachPostWorkoutView todayData={todayData} dateStr={todayStr} />
+                    <button
+                        onClick={() => setShowPlanBelowAnalysis(!showPlanBelowAnalysis)}
+                        style={{
+                            width: '100%', marginTop: '0.75rem', padding: '0.6rem',
+                            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                            borderRadius: '10px', color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem',
+                            cursor: 'pointer', fontFamily: 'var(--font-mono)'
+                        }}
+                    >
+                        {showPlanBelowAnalysis ? 'Ocultar planificación' : 'Ver planificación del día'}
+                    </button>
+                </div>
+            )}
+
+            {/* POST-WORKOUT ANALYSIS — selected PAST day */}
+            {selectedDayHasActivity && selectedDate !== todayStr && (
+                <div style={{ marginBottom: '1rem' }}>
+                    <CoachPostWorkoutView todayData={selectedDayData} dateStr={selectedDate} />
                     <button
                         onClick={() => setShowPlanBelowAnalysis(!showPlanBelowAnalysis)}
                         style={{
@@ -270,7 +298,7 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
             )}
 
             {/* CAPA 1: ENTRENADOR CONTEXTUAL (hidden when post-workout is active, unless toggled) */}
-            {(!hasCompletedActivity || showPlanBelowAnalysis) && (
+            {(!(hasCompletedActivity && selectedDate === todayStr) && !selectedDayHasActivity || showPlanBelowAnalysis) && (
                 <div>
                     <div className="copilot-card copilot-main" style={{ padding: '1.5rem' }}>
                         <div className="flex-col gap-md">

@@ -30,12 +30,12 @@ const Z2_RULES = {
     maxCoastPct: 15,             // % máx sin pedalear para drift válido
 };
 
-const CoachPostWorkoutView = ({ todayData, onSaveRpe }) => {
+const CoachPostWorkoutView = ({ todayData, onSaveRpe, dateStr }) => {
     const [rpe, setRpe] = useState(null);
     const [rpeSaved, setRpeSaved] = useState(false);
 
-    const todayStr = new Date().toLocaleDateString('sv');
-    const planned = getPlannedSession(todayStr);
+    const effectiveDate = dateStr || new Date().toLocaleDateString('sv');
+    const planned = getPlannedSession(effectiveDate);
 
     // ─── Extract today's activity from intervals data ────────────
     const activity = useMemo(() => {
@@ -221,8 +221,10 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe }) => {
 
     // ─── TOMORROW IMPACT ─────────────────────────────────────────
     const tomorrowImpact = useMemo(() => {
-        const tomorrowStr = new Date(Date.now() + 86400000).toLocaleDateString('sv');
-        const tomorrowPlan = getPlannedSession(tomorrowStr);
+        const baseDate = new Date(effectiveDate + 'T12:00:00');
+        baseDate.setDate(baseDate.getDate() + 1);
+        const nextDayStr = baseDate.toLocaleDateString('sv');
+        const tomorrowPlan = getPlannedSession(nextDayStr);
         const alerts = [];
 
         if (z2Diagnosis?.classification === 'CONTAMINADA' || z2Diagnosis?.classification === 'ALTA') {
@@ -257,7 +259,7 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe }) => {
         }
 
         return { tomorrowPlan, alerts, clear: alerts.length === 0 };
-    }, [z2Diagnosis, fcMedia, ifReal, driftReal, driftValid, viReal, isPlannedZ2, rpe, tssReal]);
+    }, [z2Diagnosis, fcMedia, ifReal, driftReal, driftValid, viReal, isPlannedZ2, rpe, tssReal, effectiveDate]);
 
     // ─── RPE HANDLER ─────────────────────────────────────────────
     const handleRpe = useCallback((val) => {
@@ -270,8 +272,9 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe }) => {
     const [copied, setCopied] = useState(false);
 
     const handleCopyAnalysis = () => {
+        const displayDate = new Date(effectiveDate + 'T12:00:00');
         let text = `ANÁLISIS DE SESIÓN — ${planned.title || activityName}\n\n`;
-        text += `${activityName} · ${new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}\n\n`;
+        text += `${activityName} · ${displayDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}\n\n`;
 
         // 1. COHERENCIA
         text += `1. Coherencia con el Plan\n\n`;
@@ -397,7 +400,7 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe }) => {
                     <p style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--cyan)', letterSpacing: '0.2em', margin: 0 }}>
                         Análisis de Sesión — {planned.title || activityName}
                     </p>
-                    <p style={T.meta}>{activityName} · {new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+                    <p style={T.meta}>{activityName} · {new Date(effectiveDate + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
                 </div>
                 <button
                     onClick={handleCopyAnalysis}
