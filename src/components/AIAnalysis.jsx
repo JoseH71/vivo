@@ -2,13 +2,15 @@
  * VIVO — AI Analysis v4.0
  * Layout de 3 pestañas internas: Interpretación / Prescripción / Plan
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
     Brain, Loader2, RefreshCw, Moon, Zap, Droplets, Activity,
     ThumbsUp, ThumbsDown, TrendingUp, TrendingDown, Minus,
     ChevronDown, ChevronUp, HelpCircle, Flame, Award, MessageCircle,
-    Calendar, Dumbbell, Bike, Search, Clipboard, CheckSquare
+    Calendar, Dumbbell, Bike, Search, Clipboard, CheckSquare, Send
 } from 'lucide-react';
+import { chatWithCoach } from '../services/geminiService';
+import { PLAN, MESOCYCLE_START_DATE, MESOCYCLE_END_DATE, getWeekForDate, getPlannedSession } from '../services/mesocycleService';
 
 /* ── Status Theme ── */
 const STATUS = {
@@ -123,12 +125,166 @@ const getSleepColor = (label) => {
 /* ═══════════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════════ */
-const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData, error }) => {
+const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData, error, activeMesocycleData }) => {
     const [activeTab, setActiveTab] = useState('interpretacion');
     const [showDeepDive, setShowDeepDive] = useState(false);
     const [expandedQ, setExpandedQ] = useState(null);
     const [feedback, setFeedback] = useState(null);
     const [feedbackDetail, setFeedbackDetail] = useState(null);
+    
+    // Chat state
+    const [chatMessages, setChatMessages] = useState([]);
+    const [chatInput, setChatInput] = useState('');
+    const [isChatLoading, setIsChatLoading] = useState(false);
+
+    const handleSendMessage = async () => {
+        if (!chatInput.trim() || isChatLoading) return;
+        
+        const userMsg = chatInput;
+        setChatInput('');
+        setChatMessages(prev => [...prev, { role: 'user', parts: [{ text: userMsg }] }]);
+        setIsChatLoading(true);
+
+        // ── Build FULL VIVO context for the Coach ──
+        const buildFullContext = () => {
+            if (!intervalsData || intervalsData.length === 0) return {};
+
+            // ── Mesocycle / Training Plan context ──
+            const todayStr = new Date().toLocaleDateString('sv');
+            const customStart = activeMesocycleData?.startDate || MESOCYCLE_START_DATE;
+            
+            const getWeekForDateDynamic = (dStr) => {
+                const d = new Date(dStr);
+                const s = new Date(customStart);
+                return Math.floor((d - s) / (1000 * 60 * 60 * 24 * 7)) + 1;
+            };
+
+            const currentWeek = getWeekForDateDynamic(todayStr);
+            const todayPlanned = activeMesocycleData?.sessions?.[todayStr] || getPlannedSession(todayStr);
+            
+            const weekLabel = activeMesocycleData?.weekLabels?.[currentWeek - 1] || 'Fuera de mesociclo';
+
+            // Build this week's plan summary
+            const weekStart = new Date(todayStr);
+            const dow = weekStart.getDay();
+            weekStart.setDate(weekStart.getDate() - (dow === 0 ? 6 : dow - 1)); // Monday
+            const thisWeekPlan = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(weekStart);
+                d.setDate(weekStart.getDate() + i);
+                const dateStr = d.toLocaleDateString('sv');
+                const session = getPlannedSession(dateStr);
+                const dayName = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i];
+                const isToday = dateStr === todayStr;
+                return `${isToday ? '→ ' : '  '}${dayName} ${dateStr}: ${session.type} - ${session.title}`;
+            });
+
+            const now = Date.now();
+            const todayData = intervalsData[0] || {};
+            const todayActivity = todayData.activities?.[0];
+
+            // ── Athlete Profile ──
+            let bestNP = null, totalTSS7 = 0, totalTSS28 = 0;
+            intervalsData.forEach(day => {
+                const daysAgo = (now - new Date(day.id).getTime()) / 86400000;
+                const tss = day.dailyTSS || 0;
+                if (daysAgo <= 7) totalTSS7 += tss;
+                if (daysAgo <= 28) totalTSS28 += tss;
+                (day.activities || []).forEach(a => {
+                    if (['Ride','VirtualRide','Cycling'].includes(a.type)) {
+                        const np = a.icu_weighted_avg_watts;
+                        if (np && np > (bestNP || 0)) bestNP = Math.round(np);
+                    }
+                });
+            });
+
+            // ── Last 7 days history (what you see in Métricas tab) ──
+            const last7 = intervalsData.slice(0, 7).map(d => {
+                const acts = (d.activities || []).map(a =>
+                    `${a.name || a.type} (${Math.round((a.moving_time||0)/60)}'` +
+                    `${a.icu_weighted_avg_watts ? ` NP:${Math.round(a.icu_weighted_avg_watts)}W` : ''}` +
+                    `${a.average_heartrate ? ` FC:${Math.round(a.average_heartrate)}` : ''}` +
+                    `${a.icu_training_load ? ` TSS:${Math.round(a.icu_training_load)}` : ''})`
+                ).join(' + ') || 'Descanso';
+                return `${d.id}: HRV=${d.hrv||'-'} RHR=${d.restingHR||d.rhr||'-'} Sueño=${d.sleepScore||'-'} TSS=${d.dailyTSS||0} → ${acts}`;
+            });
+
+            // ── Today's workout details ──
+            const workout = todayActivity ? {
+                name: todayActivity.name,
+                type: todayActivity.type,
+                moving_time: Math.round((todayActivity.moving_time||0)/60) + ' min',
+                elapsed_time: Math.round((todayActivity.elapsed_time||0)/60) + ' min',
+                distance_km: todayActivity.distance ? (todayActivity.distance/1000).toFixed(1) : null,
+                elevation_gain: todayActivity.total_elevation_gain ? Math.round(todayActivity.total_elevation_gain)+'m' : null,
+                avg_hr: todayActivity.average_heartrate,
+                max_hr: todayActivity.max_heartrate,
+                avg_watts: todayActivity.average_watts ? Math.round(todayActivity.average_watts) : null,
+                np: todayActivity.icu_weighted_avg_watts ? Math.round(todayActivity.icu_weighted_avg_watts) : null,
+                if_ratio: todayActivity.icu_intensity_factor?.toFixed(2),
+                vi: todayActivity.icu_variability_index?.toFixed(2),
+                tss: todayActivity.icu_training_load ? Math.round(todayActivity.icu_training_load) : null,
+                decoupling: todayActivity.icu_aerobic_decoupling ? (todayActivity.icu_aerobic_decoupling*100).toFixed(1)+'%' : null,
+                avg_cadence: todayActivity.average_cadence ? Math.round(todayActivity.average_cadence) : null,
+                start_time: todayActivity.start_date_local ? new Date(todayActivity.start_date_local).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) : null,
+            } : null;
+
+            // ── IEA details (what you see in Hoy tab) ──
+            const ieaDetails = iea ? {
+                score: iea.score,
+                label: iea.label,
+                hrvZScore: iea.details?.hrv?.zScore,
+                rhrDeviation: iea.details?.rhr?.deviation,
+                rhrBaseline: iea.details?.rhr?.baseline,
+                sleepPenalty: iea.details?.sleep?.penalty,
+                loadTSB: iea.details?.load?.tsb,
+                bands: iea.bands,
+            } : null;
+
+            return {
+                athleteProfile: {
+                    ftp: 235, ftp_target: 260, weight: 70, height: 184, age: 54,
+                    best_np_90d: bestNP,
+                    ctl: Math.round(todayData.ctl || 0),
+                    atl: Math.round(todayData.atl || 0),
+                    tsb: iea?.details?.load?.tsb,
+                    max_ctl: Math.round(Math.max(...intervalsData.filter(d=>d.ctl).map(d=>d.ctl)) || 0),
+                    tss_7d: Math.round(totalTSS7),
+                    tss_28d: Math.round(totalTSS28),
+                    avg_weekly_tss: Math.round(totalTSS28 / 4),
+                },
+                morning: {
+                    hrv: todayData.hrv,
+                    restingHR: todayData.rhr || todayData.restingHR,
+                    sleep: todayData.sleepScore,
+                    sleepHours: todayData.sleepSecs ? (todayData.sleepSecs/3600).toFixed(1) : null,
+                },
+                ieaDetails,
+                todayWorkout: workout,
+                recentHistory: last7,
+                todayPlan: data?.prescription?.title || 'No definido',
+                // 📋 Mesocycle / Training Plan
+                mesocycle: {
+                    startDate: MESOCYCLE_START_DATE,
+                    endDate: MESOCYCLE_END_DATE,
+                    currentWeek,
+                    weekLabel,
+                    todayPlanned: todayPlanned ? `${todayPlanned.type} - ${todayPlanned.title}: ${todayPlanned.desc}` : 'Sin sesión planificada',
+                    thisWeekPlan,
+                },
+            };
+        };
+
+        const ctx = buildFullContext();
+
+        try {
+            const response = await chatWithCoach(userMsg, chatMessages, ctx);
+            setChatMessages(prev => [...prev, { role: 'model', parts: [{ text: response }] }]);
+        } catch (e) {
+            console.error('[Chat] Error:', e);
+        } finally {
+            setIsChatLoading(false);
+        }
+    };
 
     // Parse analysis data
     const data = useMemo(() => {
@@ -243,6 +399,7 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
         { id: 'interpretacion', label: 'Interpretación', icon: <Search size={15} /> },
         { id: 'prescripcion', label: 'Prescripción', icon: <Zap size={15} /> },
         { id: 'plan', label: 'Plan', icon: <CheckSquare size={15} /> },
+        { id: 'chat', label: 'Coach Chat', icon: <MessageCircle size={15} /> },
     ];
 
     return (
@@ -289,13 +446,12 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
 
                 {data.consistencyStreak && (
                     <div style={{
-                        display: 'flex', alignItems: 'center', gap: '0.45rem',
-                        marginTop: '0.6rem', padding: '0.3rem 0.6rem',
-                        background: 'rgba(255,255,255,0.04)', borderRadius: '8px',
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                        marginTop: '0.4rem',
                         position: 'relative', zIndex: 1
                     }}>
-                        <Flame size={13} style={{ color: '#f97316' }} />
-                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)' }}>
+                        <Flame size={14} style={{ color: '#f97316', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>
                             {data.consistencyStreak.text}
                         </span>
                     </div>
@@ -564,49 +720,7 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                         borderRadius: '22px', border: '1px solid rgba(255,255,255,0.05)'
                     }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <div>
-                                    <span style={{ fontSize: '0.88rem', fontWeight: 800, color: '#fff', display: 'block', marginBottom: '0.15rem' }}>
-                                        ¿Qué te parece?
-                                    </span>
-                                    <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)' }}>
-                                        Tu opinión mejora el análisis
-                                    </span>
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <button onClick={() => { setFeedback('up'); setFeedbackDetail(null); }} className="ia-fb-btn" data-active={feedback === 'up'} style={{ padding: '0.7rem', borderRadius: '14px' }}>
-                                        <ThumbsUp size={22} />
-                                    </button>
-                                    <button onClick={() => { setFeedback('down'); setFeedbackDetail(null); }} className="ia-fb-btn" data-active={feedback === 'down'} style={{ padding: '0.7rem', borderRadius: '14px' }}>
-                                        <ThumbsDown size={22} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {feedback && !feedbackDetail && (
-                                <div className="animate-fade-in" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                                    <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', width: '100%' }}>¿Qué sección fue más útil?</span>
-                                    {['Interpretación', 'Prescripción', 'Plan'].map(opt => (
-                                        <button key={opt} onClick={() => setFeedbackDetail(opt)} className="ia-fb-detail-btn" style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem', borderRadius: '10px' }}>
-                                            {opt}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                            {feedbackDetail && (
-                                <span className="animate-fade-in" style={{
-                                    fontSize: '0.82rem', fontWeight: 700,
-                                    color: feedback === 'up' ? '#22c55e' : '#ef4444',
-                                    textAlign: 'center', display: 'block',
-                                    background: feedback === 'up' ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                                    padding: '0.55rem', borderRadius: '10px'
-                                }}>
-                                    ¡Gracias! Nos fijamos más en {feedbackDetail.toLowerCase()}.
-                                </span>
-                            )}
-
-                            <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)' }} />
-
+                            {/* Regenerar */}
                             <button onClick={onRequestAnalysis} className="ia-refresh-btn" style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', borderRadius: '14px' }}>
                                 <RefreshCw size={17} />
                                 <span style={{ fontSize: '0.85rem' }}>Regenerar Análisis Completo</span>
@@ -617,8 +731,219 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                 </div>
             )}
 
+            {/* ── TAB 4: CHAT CON EL COACH ── */}
+            {activeTab === 'chat' && (
+                <CoachChatView 
+                    chatMessages={chatMessages}
+                    isChatLoading={isChatLoading}
+                    chatInput={chatInput}
+                    setChatInput={setChatInput}
+                    handleSendMessage={handleSendMessage}
+                />
+            )}
+
+
+        </div>
+    );
+};
+
+/* ── TAB 4: CHAT CON EL COACH ── */
+const CoachChatView = ({ chatMessages, isChatLoading, chatInput, setChatInput, handleSendMessage }) => {
+    const messagesEndRef = useRef(null);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [chatMessages, isChatLoading]);
+
+    const QUICK_QUESTIONS = [
+        "¿Cómo ves mi HRV hoy?",
+        "¿Está bien el entreno que acabo de hacer?",
+        "¿Cuándo toca deload?",
+        "¿Subo el volumen esta semana?",
+    ];
+
+    return (
+        <div className="animate-fade-in" style={{ 
+            display: 'flex', flexDirection: 'column',
+            height: '70vh', minHeight: '520px',
+            borderRadius: '24px', overflow: 'hidden',
+            background: 'linear-gradient(180deg, rgba(6,182,212,0.04) 0%, rgba(0,0,0,0.3) 100%)',
+            border: '1px solid rgba(6,182,212,0.15)',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.4)'
+        }}>
+            {/* Header */}
+            <div style={{
+                padding: '0.9rem 1.2rem',
+                background: 'rgba(6,182,212,0.08)',
+                borderBottom: '1px solid rgba(6,182,212,0.15)',
+                display: 'flex', alignItems: 'center', gap: '0.8rem'
+            }}>
+                <div style={{
+                    width: '40px', height: '40px', borderRadius: '50%',
+                    background: 'linear-gradient(135deg, var(--cyan), #0ea5e9)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '1.1rem', boxShadow: '0 0 16px rgba(6,182,212,0.4)'
+                }}>🧠</div>
+                <div>
+                    <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#fff' }}>Coach VIVO</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--cyan)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 6px var(--green)' }} />
+                        En línea · Tengo tus datos a la vista
+                    </div>
+                </div>
+            </div>
+
+            {/* Messages Area */}
+            <div style={{ 
+                flex: 1, padding: '1.2rem 1rem', overflowY: 'auto', 
+                display: 'flex', flexDirection: 'column', gap: '1rem',
+                scrollbarWidth: 'thin', scrollbarColor: 'rgba(6,182,212,0.2) transparent'
+            }}>
+                {/* Welcome State */}
+                {chatMessages.length === 0 && (
+                    <div className="animate-fade-in" style={{ textAlign: 'center', padding: '1.5rem 1rem' }}>
+                        <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>👋</div>
+                        <p style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.8)', fontWeight: 600, marginBottom: '0.4rem' }}>
+                            ¡Hola Jose! Soy tu Coach.
+                        </p>
+                        <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)', marginBottom: '1.5rem' }}>
+                            Tengo tus biométricos y tu historial de entreno a la vista. Pregúntame lo que quieras.
+                        </p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center' }}>
+                            {QUICK_QUESTIONS.map((q, i) => (
+                                <button key={i} onClick={() => setChatInput(q)} style={{
+                                    padding: '0.5rem 0.9rem', borderRadius: '20px', fontSize: '0.78rem',
+                                    background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)',
+                                    color: 'var(--cyan)', cursor: 'pointer', transition: 'all 0.2s', fontWeight: 600
+                                }}
+                                onMouseOver={e => e.currentTarget.style.background = 'rgba(6,182,212,0.18)'}
+                                onMouseOut={e => e.currentTarget.style.background = 'rgba(6,182,212,0.08)'}
+                                >{q}</button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Messages */}
+                {chatMessages.map((msg, i) => (
+                    <div key={i} style={{
+                        display: 'flex',
+                        flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
+                        alignItems: 'flex-end', gap: '0.6rem'
+                    }}>
+                        {/* Avatar */}
+                        {msg.role === 'model' && (
+                            <div style={{
+                                width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
+                                background: 'linear-gradient(135deg, var(--cyan), #0ea5e9)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '0.85rem'
+                            }}>🧠</div>
+                        )}
+
+                        {/* Bubble */}
+                        <div style={{
+                            maxWidth: '82%',
+                            padding: '0.85rem 1.1rem',
+                            borderRadius: msg.role === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
+                            background: msg.role === 'user'
+                                ? 'linear-gradient(135deg, var(--cyan), #0ea5e9)'
+                                : 'rgba(255,255,255,0.06)',
+                            color: msg.role === 'user' ? '#000' : '#fff',
+                            fontSize: '0.9rem',
+                            fontWeight: msg.role === 'user' ? 700 : 500,
+                            lineHeight: 1.6,
+                            border: msg.role === 'user' ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                            boxShadow: msg.role === 'user' ? '0 4px 20px rgba(6,182,212,0.3)' : 'none',
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word'
+                        }}>
+                            {msg.role === 'model' 
+                                ? msg.parts[0].text
+                                    .replace(/\*\*(.*?)\*\*/g, '$1')
+                                    .replace(/\*(.*?)\*/g, '$1')
+                                    .replace(/^#+\s/gm, '')
+                                    .replace(/^\*\s/gm, '• ')
+                                    .replace(/^-\s/gm, '• ')
+                                : msg.parts[0].text
+                            }
+                        </div>
+                    </div>
+                ))}
+
+                {/* Typing Indicator */}
+                {isChatLoading && (
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.6rem' }}>
+                        <div style={{
+                            width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
+                            background: 'linear-gradient(135deg, var(--cyan), #0ea5e9)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem'
+                        }}>🧠</div>
+                        <div style={{
+                            padding: '0.85rem 1.1rem', borderRadius: '20px 20px 20px 4px',
+                            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)',
+                            display: 'flex', gap: '0.3rem', alignItems: 'center'
+                        }}>
+                            {[0, 1, 2].map(d => (
+                                <div key={d} style={{
+                                    width: '7px', height: '7px', borderRadius: '50%',
+                                    background: 'var(--cyan)',
+                                    animation: `pulse 1.2s ease-in-out ${d * 0.2}s infinite`
+                                }} />
+                            ))}
+                        </div>
+                    </div>
+                )}
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input Area */}
+            <div style={{ 
+                padding: '0.9rem 1rem',
+                background: 'rgba(0,0,0,0.3)',
+                borderTop: '1px solid rgba(255,255,255,0.05)',
+                display: 'flex', gap: '0.6rem', alignItems: 'center'
+            }}>
+                <input 
+                    type="text" 
+                    placeholder="Pregunta a tu Coach... (Enter para enviar)"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                    style={{
+                        flex: 1,
+                        background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid rgba(6,182,212,0.2)',
+                        borderRadius: '14px',
+                        padding: '0.8rem 1.1rem',
+                        color: '#fff',
+                        fontSize: '0.92rem',
+                        outline: 'none',
+                        transition: 'border-color 0.2s',
+                        fontFamily: 'inherit'
+                    }}
+                    onFocus={e => e.target.style.borderColor = 'rgba(6,182,212,0.5)'}
+                    onBlur={e => e.target.style.borderColor = 'rgba(6,182,212,0.2)'}
+                />
+                <button 
+                    onClick={handleSendMessage}
+                    disabled={isChatLoading || !chatInput.trim()}
+                    style={{
+                        width: '46px', height: '46px', borderRadius: '50%', 
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: chatInput.trim() ? 'linear-gradient(135deg, var(--cyan), #0ea5e9)' : 'rgba(255,255,255,0.05)',
+                        border: 'none', cursor: chatInput.trim() ? 'pointer' : 'default',
+                        opacity: isChatLoading ? 0.4 : 1,
+                        transition: 'all 0.25s',
+                        boxShadow: chatInput.trim() ? '0 4px 16px rgba(6,182,212,0.4)' : 'none',
+                        flexShrink: 0
+                    }}
+                >
+                    <Send size={18} color={chatInput.trim() ? '#000' : 'rgba(255,255,255,0.3)'} />
+                </button>
+            </div>
         </div>
     );
 };
 
 export default AIAnalysis;
+

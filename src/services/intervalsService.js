@@ -263,3 +263,59 @@ export const fetchIntervalsActivities = async (startDate, endDate) => {
         return (cached || []);
     }
 };
+
+export const fetchActivityLaps = async (activityId) => {
+    // Usar la constante global importada de firebase.js
+    const apiKey = INTERVALS_API_KEY || '';
+    if (!apiKey || !activityId) return [];
+
+    const authStr = btoa('API_KEY:' + apiKey.trim());
+    const headers = { 'Authorization': 'Basic ' + authStr, 'Accept': 'application/json' };
+
+    const id = String(activityId).startsWith('i') ? activityId : `i${activityId}`;
+    
+    const endpoints = [
+        `https://intervals.icu/api/v1/activity/${id}/intervals`,
+        `https://intervals.icu/api/v1/activity/${id}/laps`,
+    ];
+
+    for (const url of endpoints) {
+        try {
+            const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
+            const res = await fetch(proxyUrl, { headers });
+            if (!res.ok) continue;
+            
+            const data = await res.json();
+            
+            if (Array.isArray(data) && data.length > 0) {
+                return data;
+            }
+
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+                const objKeys = Object.keys(data);
+                for (const key of objKeys) {
+                    if (Array.isArray(data[key]) && data[key].length > 0) {
+                        return data[key];
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[Intervals] Laps fetch error:', url, e.message);
+        }
+    }
+    return [];
+};
+
+export const parseIntervalSummary = (summary) => {
+    if (!Array.isArray(summary)) return [];
+    return summary.map((s, i) => {
+        const timeMatch = String(s).match(/(\d+)m(\d+)s/);
+        const wMatch = String(s).match(/(\d+)w/);
+        return {
+            _index: i + 1,
+            _duration_str: timeMatch ? s : s,
+            elapsed_time: timeMatch ? parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]) : null,
+            average_watts: wMatch ? parseInt(wMatch[1]) : null,
+        };
+    }).filter(l => l.elapsed_time && l.elapsed_time > 30);
+};

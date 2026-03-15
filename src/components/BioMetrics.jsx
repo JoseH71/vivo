@@ -4,7 +4,7 @@
  */
 
 const MetricPill = ({ label, value, unit, color, subtext }) => (
-    <div className="metric-pill animate-fade-in" style={color ? { borderColor: `${color}33`, background: `${color}08` } : {}}>
+    <div className="metric-pill animate-fade-in tap-active hover-glow" style={color ? { borderColor: `${color}33`, background: `${color}08` } : {}}>
         <span className="value" style={color ? { color } : {}}>
             {value ?? '—'}
         </span>

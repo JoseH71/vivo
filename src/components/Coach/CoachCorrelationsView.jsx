@@ -113,7 +113,7 @@ const CoachCorrelationsView = ({ historyData = [] }) => {
             {/* Baselines */}
             {baselines && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                    <div className="card-glass" style={{
+                    <div className="card-glass animate-scale-in stagger-1" style={{
                         padding: '1.25rem', borderRadius: '24px',
                         background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.1), transparent)',
                         border: '1px solid var(--green-soft)'
@@ -133,7 +133,7 @@ const CoachCorrelationsView = ({ historyData = [] }) => {
                             </div>
                         </div>
                     </div>
-                    <div className="card-glass" style={{
+                    <div className="card-glass animate-scale-in stagger-2" style={{
                         padding: '1.25rem', borderRadius: '24px',
                         background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1), transparent)',
                         border: '1px solid var(--purple-glow)'
@@ -157,7 +157,7 @@ const CoachCorrelationsView = ({ historyData = [] }) => {
             )}
 
             {/* Matrix */}
-            <div className="card" style={{ padding: '1.25rem', borderRadius: '24px', overflowX: 'auto' }}>
+            <div className="card animate-scale-in stagger-3" style={{ padding: '1.25rem', borderRadius: '24px', overflowX: 'auto' }}>
                 <p style={{ fontSize: '0.6rem', fontWeight: 500, textTransform: 'uppercase', textAlign: 'center', marginBottom: '1rem', opacity: 0.5 }}>Matriz Pearson</p>
                 <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: '3px' }}>
                     <thead>
@@ -219,7 +219,7 @@ const CoachCorrelationsView = ({ historyData = [] }) => {
             </div>
 
             {/* Weekly Summary */}
-            <div className="card" style={{ padding: 0, overflow: 'hidden', borderRadius: '24px' }}>
+            <div className="card animate-scale-in stagger-4" style={{ padding: 0, overflow: 'hidden', borderRadius: '24px' }}>
                 <p style={{ fontSize: '0.6rem', fontWeight: 500, textTransform: 'uppercase', padding: '1rem', background: 'rgba(255,255,255,0.02)' }}>Resumen Semanal</p>
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.65rem' }}>

@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     Activity, HeartPulse, Moon, Zap, TrendingUp, Scale, Clock,
-    Copy, SlidersHorizontal, Check, Fingerprint, Battery
+    Copy, SlidersHorizontal, Check, Fingerprint, Battery, Loader2
 } from 'lucide-react';
 import { calculateIEA } from '../engine/ieaEngine';
+import { fetchIntervalsData as fetchFromIntervals } from '../services/intervalsService';
 
 const METRICS_CONFIG = {
     iea: { label: 'IEA Score', icon: <Fingerprint size={14} />, color: '#ffffff', unit: 'pts' },
@@ -34,10 +35,56 @@ const MetricsHistory = ({ intervalsData }) => {
         'iea', 'type', 'hrv', 'rhr', 'sleepScore', 'dailyTSS'
     ]);
     const [copied, setCopied] = useState(false);
+    const [extraData, setExtraData] = useState(null);
+    const [extraLoading, setExtraLoading] = useState(false);
 
-    // Process Data
+    // Check if selected range needs more data than what App provides
+    useEffect(() => {
+        if (!intervalsData || intervalsData.length === 0) return;
+
+        // Determine the oldest date available in the prop data
+        const sortedDates = intervalsData.map(d => d.id || d.date).filter(Boolean).sort();
+        const oldestAvailable = sortedDates[0];
+
+        // If user's dateFrom is older than what we have, fetch that range
+        if (dateFrom < oldestAvailable) {
+            setExtraLoading(true);
+            fetchFromIntervals(null, dateFrom, dateTo, true)
+                .then(data => {
+                    if (data && data.length > 0) {
+                        setExtraData(data);
+                    }
+                })
+                .catch(err => console.warn('[MetricsHistory] Extra fetch error:', err))
+                .finally(() => setExtraLoading(false));
+        } else {
+            setExtraData(null); // No need for extra data
+        }
+    }, [dateFrom, dateTo, intervalsData]);
+
+    // Merge prop data + any extra fetched data
+    const mergedData = useMemo(() => {
+        if (!extraData) return intervalsData;
+        if (!intervalsData) return extraData;
+
+        const map = new Map();
+        // Add prop data first
+        intervalsData.forEach(d => {
+            const id = d.id || d.date;
+            if (id) map.set(id, d);
+        });
+        // Merge extra data (fills gaps)
+        extraData.forEach(d => {
+            const id = d.id || d.date;
+            if (id && !map.has(id)) map.set(id, d);
+        });
+
+        return Array.from(map.values()).sort((a, b) => (b.id || b.date || '').localeCompare(a.id || a.date || ''));
+    }, [intervalsData, extraData]);
+
+    // Process Data — use mergedData which includes extra fetched data for extended ranges
     const dailyData = useMemo(() => {
-        if (!intervalsData) return [];
+        if (!mergedData) return [];
         const start = new Date(dateFrom);
         const end = new Date(dateTo);
         // Ensure comparison spans full days in local time
@@ -54,13 +101,13 @@ const MetricsHistory = ({ intervalsData }) => {
             const dateStr = `${year}-${month}-${day}`;
 
             // Find data matching this exact YYYY-MM-DD string
-            const dataIndex = intervalsData.findIndex(i => (i.id || i.date) === dateStr);
-            const dayData = dataIndex !== -1 ? intervalsData[dataIndex] : {};
+            const dataIndex = mergedData.findIndex(i => (i.id || i.date) === dateStr);
+            const dayData = dataIndex !== -1 ? mergedData[dataIndex] : {};
 
             // Calculate IEA if missing
             let ieaScore = dayData.ieaScore || dayData.iea;
             if ((ieaScore === undefined || ieaScore === null) && dataIndex !== -1) {
-                const historicalSlice = intervalsData.slice(dataIndex);
+                const historicalSlice = mergedData.slice(dataIndex);
                 if (historicalSlice.length > 7) {
                     const calculated = calculateIEA(historicalSlice);
                     if (calculated && calculated.score !== null) {
@@ -90,7 +137,7 @@ const MetricsHistory = ({ intervalsData }) => {
                 type: activityType,
                 iea: ieaScore || null,
                 hrv: dayData.hrv || null,
-                rhr: dayData.restingHR || null,
+                rhr: dayData.restingHR || dayData.rhr || null,
                 sleepScore: dayData.sleepScore || null,
                 sleepSecs: sleepHours,
                 dailyTSS: dayData.dailyTSS || 0,
@@ -100,7 +147,7 @@ const MetricsHistory = ({ intervalsData }) => {
             });
         }
         return data;
-    }, [dateFrom, dateTo, intervalsData]);
+    }, [dateFrom, dateTo, mergedData]);
 
     const averages = useMemo(() => {
         const avgs = {};
@@ -151,6 +198,20 @@ const MetricsHistory = ({ intervalsData }) => {
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+            {/* Loading indicator for extended date ranges */}
+            {extraLoading && (
+                <div className="card-glass animate-fade-in" style={{
+                    padding: '0.75rem 1rem', borderRadius: '16px',
+                    display: 'flex', alignItems: 'center', gap: '0.6rem',
+                    background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)'
+                }}>
+                    <Loader2 size={16} className="animate-spin" style={{ color: 'var(--cyan)' }} />
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--cyan)' }}>
+                        Descargando datos extendidos de Intervals.icu…
+                    </span>
+                </div>
+            )}
 
             {/* Header / Controls */}
             <div className="card" style={{ padding: '1rem', borderRadius: '32px', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>

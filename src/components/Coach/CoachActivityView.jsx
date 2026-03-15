@@ -8,31 +8,48 @@ import { getRecentWeights, sendToEsqueleto } from '../../services/esqueletoServi
 import CoachPostWorkoutView from './CoachPostWorkoutView';
 
 // --- Subcomponente: MasterPlanModal ---
-const MasterPlanModal = ({ isOpen, onClose }) => {
+const MasterPlanModal = ({ isOpen, onClose, activeMesocycleData, allMesocycles = [] }) => {
+    const [viewedMesoId, setViewedMesoId] = useState(null);
+    
+    // Default to active on first open
+    React.useEffect(() => {
+        if (isOpen && activeMesocycleData && !viewedMesoId) {
+            setViewedMesoId(activeMesocycleData.id);
+        }
+    }, [isOpen, activeMesocycleData]);
+
     if (!isOpen) return null;
 
-    const sections = [
-        {
-            title: 'SEMANA 1: ADAPTACIÓN CONTROLADA',
-            color: '#3B82F6',
-            days: ['2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-21', '2026-02-22']
-        },
-        {
-            title: 'SEMANA 2: PROGRESIÓN DE CARGA',
-            color: '#10B981',
-            days: ['2026-02-23', '2026-02-24', '2026-02-25', '2026-02-26', '2026-02-27', '2026-02-28', '2026-03-01']
-        },
-        {
-            title: 'SEMANA 3: PICO CONTROLADO',
-            color: '#F59E0B',
-            days: ['2026-03-02', '2026-03-03', '2026-03-04', '2026-03-05', '2026-03-06', '2026-03-07', '2026-03-08']
-        },
-        {
-            title: 'SEMANA 4: DESCARGA REAL',
-            color: '#EF4444',
-            days: ['2026-03-09', '2026-03-10', '2026-03-11', '2026-03-12', '2026-03-13', '2026-03-14', '2026-03-15']
+    const currentMeso = allMesocycles.find(m => m.id === viewedMesoId) || activeMesocycleData;
+    const mesoName = currentMeso?.name || 'Plan Maestro v4.0';
+    const mesoRange = currentMeso ? `${currentMeso.startDate} — ${currentMeso.endDate}` : '16 FEB — 15 MAR 2026';
+    
+    // Generate sections dynamically from currentMeso
+    let sections = [];
+    if (currentMeso && currentMeso.sessions) {
+        for (let wk = 0; wk < currentMeso.weeks; wk++) {
+            const start = new Date(currentMeso.startDate);
+            const days = [];
+            for (let i = wk * 7; i < (wk + 1) * 7; i++) {
+                const d = new Date(start);
+                d.setDate(start.getDate() + i);
+                days.push(d.toLocaleDateString('sv'));
+            }
+            sections.push({
+                title: `SEMANA ${wk + 1}: ${currentMeso.weekLabels?.[wk] || 'TRABAJO'}`,
+                color: currentMeso.weekColors?.[wk] || '#3b82f6',
+                days: days
+            });
         }
-    ];
+    } else {
+        // Fallback or Legacy view logic if no dynamic sessions
+        sections = [
+            { title: 'SEMANA 1', color: '#3B82F6', days: ['2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-21', '2026-02-22'] },
+            { title: 'SEMANA 2', color: '#10B981', days: ['2026-02-23', '2026-02-24', '2026-02-25', '2026-02-26', '2026-02-27', '2026-02-28', '2026-03-01'] },
+            { title: 'SEMANA 3', color: '#F59E0B', days: ['2026-03-02', '2026-03-03', '2026-03-04', '2026-03-05', '2026-03-06', '2026-03-07', '2026-03-08'] },
+            { title: 'SEMANA 4', color: '#EF4444', days: ['2026-03-09', '2026-03-10', '2026-03-11', '2026-03-12', '2026-03-13', '2026-03-14', '2026-03-15'] }
+        ];
+    }
 
     return (
         <div style={{
@@ -44,13 +61,34 @@ const MasterPlanModal = ({ isOpen, onClose }) => {
         }} className="animate-fade-in">
             <div className="flex-between mb-6">
                 <div className="flex-col">
-                    <h2 className="text-xl font-black text-white uppercase tracking-tight">🏆 Plan Maestro v4.0</h2>
-                    <span className="text-xs text-muted font-bold opacity-60">16 FEB — 15 MAR 2026</span>
+                    <h2 className="text-xl font-black text-white uppercase tracking-tight">🏆 {mesoName}</h2>
+                    <span className="text-xs text-muted font-bold opacity-60">{mesoRange}</span>
                 </div>
                 <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', padding: '12px', borderRadius: '14px', color: '#fff' }}>
                     <X size={20} />
                 </button>
             </div>
+
+            {/* Selector de Plan */}
+            {allMesocycles.length > 1 && (
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                    {allMesocycles.map(m => (
+                        <button
+                            key={m.id}
+                            onClick={() => setViewedMesoId(m.id)}
+                            style={{
+                                padding: '0.6rem 1rem', borderRadius: '12px',
+                                background: viewedMesoId === m.id ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255,255,255,0.03)',
+                                border: `1px solid ${viewedMesoId === m.id ? 'var(--cyan)' : 'rgba(255,255,255,0.05)'}`,
+                                color: viewedMesoId === m.id ? 'var(--cyan)' : 'var(--text-muted)',
+                                fontSize: '0.7rem', fontWeight: 800, whiteSpace: 'nowrap', cursor: 'pointer'
+                            }}
+                        >
+                            {m.name}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             <div className="flex-col gap-xl">
                 {sections.map(section => (
@@ -60,7 +98,7 @@ const MasterPlanModal = ({ isOpen, onClose }) => {
                         </h3>
                         <div className="flex-col gap-lg">
                             {section.days.map(date => {
-                                const p = getPlannedSession(date);
+                                const p = (currentMeso?.sessions?.[date]) || getPlannedSession(date);
                                 const d = new Date(date);
                                 const dayName = ['LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO', 'DOMINGO'][d.getDay() === 0 ? 6 : d.getDay() - 1];
                                 return (
@@ -105,16 +143,22 @@ const TrainIcon = ({ type, size = 16, color = "currentColor" }) => {
     }
 };
 
-const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
+const CoachActivityView = ({ intervalsData, dailyRecommendation, activeMesocycleData, weeklyPlan = {}, allMesocycles = [] }) => {
     const todayStr = new Date().toLocaleDateString('sv');
+    
+    // Helper local for lookups
+    const getPlannedSessionLocal = (dateStr) => {
+        return weeklyPlan[dateStr] || { type: 'Descanso', title: 'Fuera de Plan', desc: '-', tss: 0, icon: 'Moon' };
+    };
+
     const [selectedDate, setSelectedDate] = useState(todayStr);
     const [manualOverride, setManualOverride] = useState(null);
     const [showFullMesocycle, setShowFullMesocycle] = useState(false);
     const [showMasterPlan, setShowMasterPlan] = useState(false);
     const [showPlanBelowAnalysis, setShowPlanBelowAnalysis] = useState(false);
 
-    const plannedToday = manualOverride || getPlannedSession(todayStr);
-    const selectedSession = getPlannedSession(selectedDate);
+    const plannedToday = manualOverride || getPlannedSessionLocal(todayStr);
+    const selectedSession = getPlannedSessionLocal(selectedDate);
 
     // Detect if today has a completed activity
     const todayData = useMemo(() => {
@@ -212,43 +256,35 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
     // Generate Calendar Days
     const calendarDays = useMemo(() => {
         const days = [];
-        const start = new Date(MESOCYCLE_START_DATE);
+        // Start calendar from Jan 26th (Monday) to align with headers [L, M, X, J, V, S, D]
+        const start = new Date('2026-01-26'); 
 
-        // Find current week range
-        const now = new Date();
-        const currentDayOfLife = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-        const currentWeekNum = Math.floor(currentDayOfLife / 7);
-        const startOfCurrentWeek = currentWeekNum * 7;
-        const endOfCurrentWeek = startOfCurrentWeek + 7;
-
-        for (let i = 0; i < 28; i++) {
+        // Show 70 days (10 weeks) to cover February, March and early April
+        for (let i = 0; i < 70; i++) {
             const d = new Date(start);
             d.setDate(start.getDate() + i);
             const dStr = d.toLocaleDateString('sv');
-            const p = getPlannedSession(dStr);
+            const p = getPlannedSessionLocal(dStr);
 
-            const isInCurrentWeek = i >= startOfCurrentWeek && i < endOfCurrentWeek;
             const isPast = dStr <= todayStr;
 
             // Check if the day has a completed activity in intervalsData
-            const dayData = intervalsData?.find(d => d.id === dStr);
+            const dayData = intervalsData?.find(d => d.id === dStr || d.date === dStr);
             const isDone = !!(dayData && dayData.activities?.some(a => (a.icu_training_load || a.tss || 0) > 0));
 
-            if (showFullMesocycle || isInCurrentWeek) {
-                days.push({
-                    date: dStr,
-                    dayNum: d.getDate(),
-                    session: p,
-                    isToday: dStr === todayStr,
-                    isSelected: dStr === selectedDate,
-                    isPast,
-                    isDone,
-                    hasPlannedActivity: p.type !== 'Descanso' && p.type !== null
-                });
-            }
+            days.push({
+                date: dStr,
+                dayNum: d.getDate(),
+                session: p,
+                isToday: dStr === todayStr,
+                isSelected: dStr === selectedDate,
+                isPast,
+                isDone,
+                hasPlannedActivity: p.type !== 'Descanso' && p.type !== null
+            });
         }
         return days;
-    }, [todayStr, selectedDate, showFullMesocycle, intervalsData]);
+    }, [todayStr, selectedDate, intervalsData, weeklyPlan]);
 
     // Derived Suggestion
     const suggestion = dailyRecommendation || {
@@ -259,7 +295,7 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
 
     return (
         <div className="copilot-container stagger">
-            <MasterPlanModal isOpen={showMasterPlan} onClose={() => setShowMasterPlan(false)} />
+            <MasterPlanModal isOpen={showMasterPlan} onClose={() => setShowMasterPlan(false)} activeMesocycleData={activeMesocycleData} allMesocycles={allMesocycles} />
 
             {/* POST-WORKOUT ANALYSIS — today or selected past day */}
             {(hasCompletedActivity && selectedDate === todayStr) && (
@@ -435,7 +471,7 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
                         <div className="flex-between mb-4 px-1" style={{ alignItems: 'center' }}>
                             <div className="flex-col">
                                 <h3 className="text-xs font-black uppercase tracking-widest" style={{ fontSize: '0.7rem', color: 'var(--cyan)', fontWeight: 900, margin: 0 }}>Calendario</h3>
-                                <div style={{ color: '#fff', fontSize: '10px', opacity: 0.6, fontWeight: 400, marginTop: '2px' }}>Feb/Mar 2026</div>
+                                <div style={{ color: '#fff', fontSize: '10px', opacity: 0.6, fontWeight: 400, marginTop: '2px' }}>VIVO Active Plans</div>
                             </div>
 
                             <button
@@ -461,7 +497,7 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
                                 style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                             >
                                 {showFullMesocycle ? <ChevronUp size={14} color="var(--cyan)" /> : <ChevronDown size={14} color="var(--cyan)" />}
-                                <span style={{ fontSize: '10px', fontWeight: 900, color: 'var(--cyan)' }}>{showFullMesocycle ? 'VER SEMANA' : 'VER MES'}</span>
+                                <span style={{ fontSize: '10px', fontWeight: 900, color: 'var(--cyan)' }}>{showFullMesocycle ? 'VER HOY' : 'VER TODO'}</span>
                             </button>
                         </div>
 
@@ -533,6 +569,9 @@ const CoachActivityView = ({ intervalsData, dailyRecommendation }) => {
                                     )}
                                 </div>
                             ))}
+                        </div>
+                        <div style={{ padding: '8px', textAlign: 'center' }}>
+                             <p style={{ fontSize: '9px', color: 'var(--text-muted)', margin: 0 }}>Desliza o haz scroll para ver las 10 semanas de planificación histórica y futura.</p>
                         </div>
                     </div>
 

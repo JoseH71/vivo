@@ -6,81 +6,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Search, Loader2, ChevronDown, ChevronUp, Calendar, Zap, Activity, Copy, Check } from 'lucide-react';
 import { ATHLETE_ID, INTERVALS_API_KEY } from '../../config/firebase';
+import { fetchActivityLaps, parseIntervalSummary } from '../../services/intervalsService';
 import { HISTORICAL_SST } from '../../data/historicalSST';
 
-// ── Fetch laps de una actividad concreta ──────────────────────────
-const fetchActivityLaps = async (activityId) => {
-    if (!INTERVALS_API_KEY || !activityId) return [];
-
-    const authStr = btoa('API_KEY:' + INTERVALS_API_KEY.trim());
-    const headers = { 'Authorization': 'Basic ' + authStr, 'Accept': 'application/json' };
-
-    // El ID en Intervals SIEMPRE lleva prefijo 'i'
-    const id = String(activityId).startsWith('i') ? activityId : `i${activityId}`;
-
-    // Endpoints en orden de prioridad
-    const endpoints = [
-        `https://intervals.icu/api/v1/activity/${id}/intervals`,
-        `https://intervals.icu/api/v1/activity/${id}/laps`,
-    ];
-
-    for (const url of endpoints) {
-        try {
-            const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
-            const res = await fetch(proxyUrl, { headers });
-            if (!res.ok) { console.log('[Analysis] Endpoint failed:', res.status, url); continue; }
-            const data = await res.json();
-            console.log('[Analysis] Endpoint OK:', url, '| Type:', typeof data, '| IsArray:', Array.isArray(data));
-
-            // Si es array directo
-            if (Array.isArray(data) && data.length > 0) {
-                console.log('[Analysis] Direct array, first keys:', Object.keys(data[0]));
-                return data;
-            }
-
-            // Si es un Object, buscar arrays dentro
-            if (data && typeof data === 'object' && !Array.isArray(data)) {
-                const objKeys = Object.keys(data);
-                console.log('[Analysis] Object keys:', objKeys.join(', '));
-
-                // Buscar propiedades que sean arrays con datos
-                for (const key of objKeys) {
-                    if (Array.isArray(data[key]) && data[key].length > 0) {
-                        if (typeof data[key][0] === 'object') {
-                            console.log(`[Analysis] "${key}" first item keys:`, Object.keys(data[key][0]).join(', '));
-                            console.log(`[Analysis] "${key}" first item:`, data[key][0]);
-                            return data[key];
-                        }
-                    }
-                }
-
-                // Log todo el objeto si no encontramos arrays
-                console.log('[Analysis] Full object:', JSON.stringify(data).slice(0, 2000));
-            }
-        } catch (e) {
-            console.warn('[Analysis] Endpoint error:', url, e.message);
-        }
-    }
-
-    console.warn('[Analysis] No interval endpoint worked for:', id);
-    return [];
-};
-
-// ── Parsear interval_summary del activity object (fallback) ──────
-// Formato: ["15m4s", "15m4s"] o "2x 37m29s 127w"
-const parseIntervalSummary = (summary) => {
-    if (!Array.isArray(summary)) return [];
-    return summary.map((s, i) => {
-        const timeMatch = String(s).match(/(\d+)m(\d+)s/);
-        const wMatch = String(s).match(/(\d+)w/);
-        return {
-            _index: i + 1,
-            _duration_str: timeMatch ? s : s,
-            elapsed_time: timeMatch ? parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]) : null,
-            average_watts: wMatch ? parseInt(wMatch[1]) : null,
-        };
-    }).filter(l => l.elapsed_time && l.elapsed_time > 30);
-};
+// Las funciones fetchActivityLaps y parseIntervalSummary ahora se importan de intervalsService.js
 
 
 // ── Formateador de segundos → mm:ss ──────────────────────────────

@@ -183,7 +183,10 @@ const TrendSection = ({ trends, accent }) => {
             >
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <TrendIcon value={trends.hrv.changePct} type="hrv" />
-                    <span className="text-muted font-bold" style={{ fontSize: '0.75rem' }}>VFC</span>
+                    <span className="font-bold" style={{
+                        fontSize: '0.75rem',
+                        color: trends.hrv.changePct > 0 ? 'var(--green)' : trends.hrv.changePct < -3 ? 'var(--red)' : 'var(--text-secondary)'
+                    }}>VFC</span>
                     <span className="font-mono font-bold" style={{
                         color: trends.hrv.changePct > 0 ? 'var(--green)' : trends.hrv.changePct < -3 ? 'var(--red)' : 'var(--text-secondary)',
                         fontSize: '0.85rem',
@@ -193,7 +196,10 @@ const TrendSection = ({ trends, accent }) => {
                 </div>
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <TrendIcon value={trends.rhr.changePct} type="rhr" />
-                    <span className="text-muted font-bold" style={{ fontSize: '0.75rem' }}>FC</span>
+                    <span className="font-bold" style={{
+                        fontSize: '0.75rem',
+                        color: trends.rhr.changePct < 0 ? 'var(--green)' : trends.rhr.changePct > 3 ? 'var(--red)' : 'var(--text-secondary)'
+                    }}>FC</span>
                     <span className="font-mono font-bold" style={{
                         color: trends.rhr.changePct < 0 ? 'var(--green)' : trends.rhr.changePct > 3 ? 'var(--red)' : 'var(--text-secondary)',
                         fontSize: '0.85rem',

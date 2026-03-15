@@ -1,11 +1,21 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Activity, History, Microscope, Loader2, AlertTriangle, Zap, CalendarDays, Bike, Moon, Dumbbell, Check, X, Search } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { Activity, History, Microscope, Loader2, AlertTriangle, Zap, Calendar, CalendarDays, Bike, Moon, Dumbbell, Check, X, Search } from 'lucide-react';
 import CoachActivityView from './CoachActivityView';
-import CoachHistoryView from './CoachHistoryView';
-import CoachCorrelationsView from './CoachCorrelationsView';
-import CoachLabView from './CoachLabView';
-import CoachAnalysisView from './CoachAnalysisView';
 import { fetchIntervalsData } from '../../services/intervalsService';
+
+// Lazy-loaded sub-views (code-splitting)
+const CoachHistoryView = lazy(() => import('./CoachHistoryView'));
+const CoachCorrelationsView = lazy(() => import('./CoachCorrelationsView'));
+const CoachLabView = lazy(() => import('./CoachLabView'));
+const CoachAnalysisView = lazy(() => import('./CoachAnalysisView'));
+const MesocycleEditor = lazy(() => import('./MesocycleEditor'));
+
+const LazyFallback = () => (
+    <div className="card flex-center animate-fade-in" style={{ padding: '3rem 0', borderRadius: '24px' }}>
+        <Loader2 className="animate-spin" size={24} style={{ color: 'var(--cyan)', marginBottom: '0.75rem' }} />
+        <p className="text-xs font-black text-muted uppercase tracking-widest">Cargando módulo…</p>
+    </div>
+);
 
 // --- WeeklyIntentions Helper Component ---
 const WeeklyIntentions = ({ weeklyPlan, onUpdatePlan, historyData }) => {
@@ -112,7 +122,7 @@ const WeeklyIntentions = ({ weeklyPlan, onUpdatePlan, historyData }) => {
     );
 };
 
-const CoachHub = ({ intervalsData, dailyRecommendation, weeklyPlan = {}, onUpdatePlan = () => { } }) => {
+const CoachHub = ({ intervalsData, dailyRecommendation, weeklyPlan = {}, onUpdatePlan = () => { }, activeMesocycleData, allMesocycles = [] }) => {
     const [subTab, setSubTab] = useState('activity'); // activity, history, correlations
     const [historyData, setHistoryData] = useState(intervalsData || []);
     const [loading, setLoading] = useState(false); // No need for heavy loading if we have initial data
@@ -164,12 +174,13 @@ const CoachHub = ({ intervalsData, dailyRecommendation, weeklyPlan = {}, onUpdat
         }
 
         switch (subTab) {
-            case 'activity': return <CoachActivityView intervalsData={historyData} dailyRecommendation={dailyRecommendation} />;
-            case 'analysis': return <CoachAnalysisView historyData={historyData} />;
-            case 'history': return <CoachHistoryView historyData={historyData} />;
-            case 'correlations': return <CoachCorrelationsView historyData={historyData} />;
-            case 'lab': return <CoachLabView historyData={historyData} />;
-            default: return <CoachActivityView />;
+            case 'activity': return <CoachActivityView intervalsData={historyData} dailyRecommendation={dailyRecommendation} activeMesocycleData={activeMesocycleData} weeklyPlan={weeklyPlan} allMesocycles={allMesocycles} />;
+            case 'analysis': return <Suspense fallback={<LazyFallback />}><CoachAnalysisView historyData={historyData} /></Suspense>;
+            case 'history': return <Suspense fallback={<LazyFallback />}><CoachHistoryView historyData={historyData} /></Suspense>;
+            case 'correlations': return <Suspense fallback={<LazyFallback />}><CoachCorrelationsView historyData={historyData} /></Suspense>;
+            case 'lab': return <Suspense fallback={<LazyFallback />}><CoachLabView historyData={historyData} /></Suspense>;
+            case 'plan': return <Suspense fallback={<LazyFallback />}><MesocycleEditor /></Suspense>;
+            default: return <CoachActivityView intervalsData={historyData} dailyRecommendation={dailyRecommendation} activeMesocycleData={activeMesocycleData} weeklyPlan={weeklyPlan} />;
         }
     };
 
@@ -182,31 +193,35 @@ const CoachHub = ({ intervalsData, dailyRecommendation, weeklyPlan = {}, onUpdat
                 background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)',
                 marginTop: '1rem'
             }}>
-                {[
-                    { id: 'activity', label: 'Dashboard', icon: <Activity size={18} /> },
-                    { id: 'analysis', label: 'Análisis', icon: <Search size={18} /> },
-                    { id: 'history', label: 'Evolución', icon: <History size={18} /> },
-                    { id: 'correlations', label: 'Matriz', icon: <Microscope size={18} /> },
-                    { id: 'lab', label: 'Lab', icon: <Microscope size={18} /> },
-                ].map(tab => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setSubTab(tab.id)}
-                        style={{
-                            flex: 1, padding: '1rem 0.5rem', borderRadius: '18px',
-                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
-                            background: subTab === tab.id ? 'var(--bg-elevated)' : 'transparent',
-                            color: subTab === tab.id ? 'var(--cyan)' : 'var(--text-muted)',
-                            border: subTab === tab.id ? '1px solid rgba(6, 182, 212, 0.4)' : '1px solid transparent',
-                            boxShadow: subTab === tab.id ? '0 10px 20px rgba(0,0,0,0.3)' : 'none',
-                            transition: 'all 0.4s cubic-bezier(0.2, 1, 0.3, 1)',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        <div style={{ transform: subTab === tab.id ? 'scale(1.1)' : 'scale(1)', transition: 'transform 0.4s' }}>{tab.icon}</div>
-                        <span className="text-xs font-black uppercase tracking-widest" style={{ fontSize: '0.55rem', opacity: subTab === tab.id ? 1 : 0.6 }}>{tab.label}</span>
-                    </button>
-                ))}
+                {
+                    [
+                        { id: 'activity', label: 'Dashboard', icon: <Activity size={18} /> },
+                        { id: 'analysis', label: 'Análisis', icon: <Search size={18} /> },
+                        { id: 'history', label: 'Evolución', icon: <History size={18} /> },
+                        { id: 'correlations', label: 'Matriz', icon: <Microscope size={18} /> },
+                        { id: 'lab', label: 'Lab', icon: <Microscope size={18} /> },
+                        { id: 'plan', label: 'Plan', icon: <Calendar size={18} /> },
+                    ].map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setSubTab(tab.id)}
+                            className={`tap-active ${subTab !== tab.id ? 'hover-lift' : ''}`}
+                            style={{
+                                flex: 1, padding: '1rem 0.5rem', borderRadius: '18px',
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
+                                background: subTab === tab.id ? 'var(--bg-elevated)' : 'transparent',
+                                color: subTab === tab.id ? 'var(--cyan)' : 'var(--text-muted)',
+                                border: subTab === tab.id ? '1px solid rgba(6, 182, 212, 0.4)' : '1px solid transparent',
+                                boxShadow: subTab === tab.id ? '0 10px 20px rgba(0,0,0,0.3)' : 'none',
+                                transition: 'all 0.4s cubic-bezier(0.2, 1, 0.3, 1)',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <div style={{ transform: subTab === tab.id ? 'scale(1.1)' : 'scale(1)', transition: 'transform 0.4s' }}>{tab.icon}</div>
+                            <span className="text-xs font-black uppercase tracking-widest" style={{ fontSize: '0.55rem', opacity: subTab === tab.id ? 1 : 0.6 }}>{tab.label}</span>
+                        </button>
+                    ))
+                }
             </nav>
 
             {/* Main Content Area */}
@@ -224,7 +239,7 @@ const CoachHub = ({ intervalsData, dailyRecommendation, weeklyPlan = {}, onUpdat
                     {renderSubView()}
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 
