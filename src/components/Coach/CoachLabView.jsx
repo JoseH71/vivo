@@ -7,13 +7,15 @@ const CoachLabView = ({ historyData = [] }) => {
     const [loadingSst, setLoadingSst] = useState(false);
 
     // ── Efecto para buscar y analizar sesiones SST y refinar el FTP ──
+    // Lógica v2: Detectar mejor intervalo continuo por sesión,
+    // aplicar factor según duración, seleccionar por duración + estabilidad
     useEffect(() => {
         const analyzeSST = async () => {
             if (!historyData || historyData.length < 5) return;
             const now = new Date();
             const cutoff90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
-            // 1. Identificar sesiones de ciclismo con "SST" en el nombre o descripcion
+            // 1. Identificar sesiones de ciclismo con "SST" en el nombre/descripcion o IF en rango SST
             const candidateActivities = [];
             historyData.forEach(day => {
                 if (!day.activities) return;
@@ -25,11 +27,10 @@ const CoachLabView = ({ historyData = [] }) => {
                     const desc = (a.description || '').toLowerCase();
                     const type = a.type || '';
                     const isBike = type === 'Ride' || type === 'VirtualRide' || type === 'Cycling';
-                    
-                    // IF entre 0.83 y 0.95 suele ser Sweet Spot
+
                     const ifVal = a.icu_intensity != null ? (a.icu_intensity > 2.0 ? a.icu_intensity / 100 : a.icu_intensity) : 0;
                     const isSstIF = ifVal >= 0.82 && ifVal <= 0.96;
-                    
+
                     if (isBike && (name.includes('sst') || desc.includes('sst') || isSstIF)) {
                         candidateActivities.push(a);
                     }
@@ -37,65 +38,99 @@ const CoachLabView = ({ historyData = [] }) => {
             });
 
             if (candidateActivities.length === 0) {
-                setSstEstimates({ avgFTP: null, count: 0 });
+                setSstEstimates({ avgFTP: null, count: 0, details: [] });
                 return;
             }
 
             setLoadingSst(true);
             try {
-                // Tomamos un maximo de 5 sesiones SST recientes para no saturar la API
                 const topSessions = candidateActivities
                     .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
                     .slice(0, 5);
 
-                const sessionFTPs = [];
+                const sessionResults = [];
 
                 for (const session of topSessions) {
                     const laps = await fetchActivityLaps(session.id || session.activity_id);
                     if (!laps || laps.length === 0) {
-                        console.log('[Lab SST] No laps found for:', session.name);
+                        console.log('[Lab SST v2] No laps for:', session.name);
                         continue;
                     }
 
-                    // Filtrar intervalos de trabajo: duracion >= 8 min
-                    const workIntervals = laps.filter(lap => {
-                        const durationSecs = lap.moving_time || lap.elapsed_time || 0;
-                        const hr = lap.average_heartrate || lap.avg_hr || lap.average_hr || 0;
-                        const pwr = lap.weighted_average_watts || lap.average_watts || 0;
-                        // Al menos 8 min Y cierta potencia o pulso para confirmarlo como serie
-                        return durationSecs >= 480 && (pwr > 150 || hr > 130);
-                    });
+                    // 2. Filtrar intervalos de trabajo CONTINUOS: ≥12 min, potencia > 150W o FC > 130
+                    const validIntervals = laps
+                        .map(lap => {
+                            const durationSecs = lap.moving_time || lap.elapsed_time || 0;
+                            const durationMin = durationSecs / 60;
+                            const hr = lap.average_heartrate || lap.avg_hr || lap.average_hr || 0;
+                            const np = lap.weighted_average_watts || lap.average_watts || 0;
+                            const decoupling = lap.decoupling != null ? Math.abs(lap.decoupling) : null;
 
-                    console.log(`[Lab SST] Activity: ${session.name} | Work intervals: ${workIntervals.length}`);
+                            // Excluir intervalos < 12 min (regla del usuario)
+                            if (durationMin < 12) return null;
+                            if (np <= 150 && hr <= 130) return null;
 
-                    if (workIntervals.length > 0) {
-                        // Usamos la NP del intervalo (weighted_average_watts) si esta disponible
-                        const avgNP = workIntervals.reduce((s, l) => s + (l.weighted_average_watts || l.average_watts || 0), 0) / workIntervals.length;
-                        
-                        if (avgNP > 100) { // Validacion de cordura
-                            // Factor 0.89 (rango medio-bajo de SST para ser mas realista/agresivo que 0.90)
-                            let ftpSst = avgNP / 0.89;
-
-                            // Si el desacople medio de ESTA sesion es < 4%, sumamos un 2% extra
-                            const avgDecoupling = workIntervals.reduce((s, l) => s + (l.decoupling || 0), 0) / workIntervals.length;
-                            if (avgDecoupling !== 0 && avgDecoupling < 4) {
-                                ftpSst *= 1.02;
+                            // 3. Calcular factor según duración
+                            let factor;
+                            if (durationMin >= 15) {
+                                // ≥15 min → factor 0.85–0.87 (usamos 0.86 como centro)
+                                factor = 0.86;
+                            } else {
+                                // 12–14 min → factor 0.88–0.90 (usamos 0.89 como centro)
+                                factor = 0.89;
                             }
-                            console.log(`[Lab SST] Activity: ${session.name} | AvgNP: ${avgNP.toFixed(1)}W | Decoupling: ${avgDecoupling.toFixed(1)}% | Estimated FTP: ${ftpSst.toFixed(1)}W`);
-                            sessionFTPs.push(ftpSst);
-                        }
+
+                            // 4. Calcular puntuación de estabilidad (menor decoupling = mejor)
+                            // Estabilidad = duración larga + bajo decoupling
+                            const stabilityScore = durationMin * (decoupling != null ? Math.max(0.1, 1 - decoupling / 20) : 0.7);
+
+                            return {
+                                durationMin: Math.round(durationMin),
+                                durationSecs,
+                                np,
+                                hr,
+                                factor,
+                                decoupling,
+                                stabilityScore,
+                                estimatedFTP: np / factor,
+                            };
+                        })
+                        .filter(Boolean);
+
+                    if (validIntervals.length === 0) {
+                        console.log(`[Lab SST v2] ${session.name}: no valid intervals ≥12min`);
+                        continue;
                     }
+
+                    // 5. Seleccionar el MEJOR intervalo: mayor duración + estabilidad
+                    // Ordenar por stabilityScore descendente (combina duración y bajo decoupling)
+                    validIntervals.sort((a, b) => b.stabilityScore - a.stabilityScore);
+                    const best = validIntervals[0];
+
+                    console.log(`[Lab SST v2] ${session.name} | Best interval: ${best.durationMin}min, NP=${best.np.toFixed(0)}W, factor=${best.factor}, decoupling=${best.decoupling != null ? best.decoupling.toFixed(1) + '%' : 'N/A'}, FTP_est=${best.estimatedFTP.toFixed(1)}W, stability=${best.stabilityScore.toFixed(1)}`);
+
+                    sessionResults.push({
+                        name: session.name,
+                        date: session.start_date_local,
+                        bestInterval: best,
+                        estimatedFTP: best.estimatedFTP,
+                    });
                 }
 
-                if (sessionFTPs.length > 0) {
-                    // En lugar de la media de todas las sesiones, tomamos el MAXIMO
-                    // El FTP se demuestra con la mejor sesion, no con el promedio de dias suaves/fuertes
-                    const maxFTP = Math.max(...sessionFTPs);
-                    console.log(`[Lab SST] Final MAX FTP chosen: ${maxFTP.toFixed(1)}W from ${sessionFTPs.length} sessions.`);
-                    setSstEstimates({ avgFTP: maxFTP, count: sessionFTPs.length });
+                if (sessionResults.length > 0) {
+                    // Tomar el FTP MÁXIMO de todas las sesiones (mejor demostración de capacidad)
+                    const maxResult = sessionResults.reduce((best, curr) =>
+                        curr.estimatedFTP > best.estimatedFTP ? curr : best
+                    );
+                    console.log(`[Lab SST v2] Final FTP: ${maxResult.estimatedFTP.toFixed(1)}W from "${maxResult.name}" (${maxResult.bestInterval.durationMin}min, factor ${maxResult.bestInterval.factor})`);
+                    setSstEstimates({
+                        avgFTP: maxResult.estimatedFTP,
+                        count: sessionResults.length,
+                        details: sessionResults,
+                    });
                 } else {
-                    console.log('[Lab SST] No valid session FTPs calculated.');
-                    setSstEstimates({ avgFTP: null, count: 0 });
+                    console.log('[Lab SST v2] No valid session FTPs calculated.');
+                    setSstEstimates({ avgFTP: null, count: 0, details: [] });
                 }
             } catch (e) {
                 console.error('[Lab] Error analizando SST:', e);
@@ -439,8 +474,35 @@ const CoachLabView = ({ historyData = [] }) => {
         
         const ftpFromLT1 = lt1PowerCenter / lt1FtpRatio;
         let blendedFTP = ftpFromLT1;
+        let blendMode = 'lt1_only'; // Para la UI
         if (sstEstimates && sstEstimates.avgFTP) {
-            blendedFTP = (0.6 * sstEstimates.avgFTP) + (0.4 * ftpFromLT1);
+            const ftpSST = sstEstimates.avgFTP;
+
+            // Comprobar si hay ≥2 sesiones SST consistentes en los últimos 14 días
+            const now14 = new Date(new Date().getTime() - 14 * 24 * 60 * 60 * 1000);
+            const recentSSTSessions = (sstEstimates.details || []).filter(d => {
+                const dDate = new Date(d.date);
+                return dDate >= now14;
+            });
+            const hasConsistentRecent = recentSSTSessions.length >= 2;
+
+            let blendA, blendB; // A = peso SST, B = peso LT1
+            if (hasConsistentRecent) {
+                // ≥2 sesiones SST consistentes en 14 días → 80% SST / 20% LT1
+                blendA = 0.80;
+                blendB = 0.20;
+                blendMode = 'consistent_80_20';
+            } else {
+                // Default: 75% SST / 25% LT1
+                blendA = 0.75;
+                blendB = 0.25;
+                blendMode = 'default_75_25';
+            }
+
+            // FTP_final = max(blendA × FTP_SST + blendB × FTP_LT1, FTP_SST × 0.97)
+            const blended = blendA * ftpSST + blendB * ftpFromLT1;
+            const floor = ftpSST * 0.97;
+            blendedFTP = Math.max(blended, floor);
         }
         const estimatedRealFTP = Math.round(blendedFTP);
 
@@ -461,13 +523,19 @@ const CoachLabView = ({ historyData = [] }) => {
         if (lt1HR) summaryText += `, FC ~${lt1HRLow}${ENDASH}${lt1HRHigh} bpm`;
         summaryText += `. Perfil: ${aerobicProfile}. ${profileText}`;
         if (sstEstimates && sstEstimates.avgFTP) {
-            summaryText += ` Estimacion FTP refinada con ${sstEstimates.count} sesiones SST (${Math.round(sstEstimates.avgFTP)}W).`;
+            const modeLabel = blendMode === 'consistent_80_20' ? '80/20 (≥2 ses. recientes)' : '75/25';
+            summaryText += ` FTP refinado: ${sstEstimates.count} ses. SST (${Math.round(sstEstimates.avgFTP)}W). Mezcla ${modeLabel}. Suelo: SST×0.97.`;
         }
+
+        // Extraer detalles del mejor intervalo SST para la UI
+        const sstBestDetail = sstEstimates?.details?.length > 0
+            ? sstEstimates.details.reduce((best, curr) => curr.estimatedFTP > best.estimatedFTP ? curr : best)
+            : null;
 
         return {
             powerCenter: lt1PowerCenter, powerLow: lt1PowerLow, powerHigh: lt1PowerHigh,
             hr: lt1HR, hrLow: lt1HRLow, hrHigh: lt1HRHigh, pctFTP: lt1PctFTP,
-            ftp: FTP, estimatedRealFTP, aerobicProfile, lt1FtpRatio,
+            ftp: FTP, estimatedRealFTP, aerobicProfile, lt1FtpRatio, blendMode,
             z2Range: { low: z2Low, high: z2High },
             confidence, confidenceColor, confidenceText,
             sessions, nA, nB, nC, totalQuality,
@@ -476,6 +544,8 @@ const CoachLabView = ({ historyData = [] }) => {
             totalDur, profileText, summaryText,
             sstFTP: sstEstimates?.avgFTP ? Math.round(sstEstimates.avgFTP) : null,
             sstCount: sstEstimates?.count || 0,
+            sstBestFactor: sstBestDetail?.bestInterval?.factor || null,
+            sstBestDuration: sstBestDetail?.bestInterval?.durationMin || null,
             loadingSst
         };
     }, [historyData, sstEstimates, loadingSst]);
@@ -486,7 +556,7 @@ const CoachLabView = ({ historyData = [] }) => {
             <div style={{ display: 'flex', gap: '0.5rem', padding: '0.3rem', background: 'rgba(255,255,255,0.02)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
                 {[
                     { id: 'physiology', label: 'Fisiologia', emoji: String.fromCodePoint(0x1F4C8) },
-                    { id: 'lt1', label: 'LT1', emoji: String.fromCodePoint(0x1F3AF) },
+                    { id: 'lt1', label: 'LT1 / FTP', emoji: String.fromCodePoint(0x1F3AF) },
                 ].map(tab => (
                     <button key={tab.id} onClick={() => setLabSubTab(tab.id)}
                         className={`tap-active ${labSubTab !== tab.id ? 'hover-lift' : ''}`}
@@ -641,18 +711,38 @@ const CoachLabView = ({ historyData = [] }) => {
                                 <div style={row}><span style={T.label}>FTP estimado real</span><span style={{ ...T.value, color: lt1.estimatedRealFTP > lt1.ftp ? 'var(--green)' : '#fff' }}>~{lt1.estimatedRealFTP} W</span></div>
                                 
                                 {lt1.sstFTP && (
-                                    <div style={{ ...row, marginTop: '-0.2rem', paddingBottom: '0.5rem' }}>
-                                        <span style={{ ...T.label, fontSize: '0.7rem', opacity: 0.6, paddingLeft: '0.75rem', borderLeft: '1px solid rgba(255,255,255,0.1)' }}>
-                                            {`${APPROX} 60% SST (${lt1.sstCount} ses) + 40% LT1`}
-                                        </span>
-                                        <span style={{ ...T.value, fontSize: '0.75rem', opacity: 0.6 }}>{Math.round(lt1.sstFTP)} W</span>
+                                    <div style={{ marginTop: '0.25rem', padding: '0.6rem 0.85rem', borderRadius: '10px', background: 'rgba(6, 182, 212, 0.04)', border: '1px solid rgba(6, 182, 212, 0.1)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.3rem' }}>
+                                            <span style={{ fontSize: '0.65rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--cyan)' }}>FTP desde SST (mejor intervalo)</span>
+                                            <span style={{ ...T.value, fontSize: '0.85rem', color: 'var(--cyan)' }}>{Math.round(lt1.sstFTP)} W</span>
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+                                            {`${lt1.sstCount} sesiones analizadas ${DOT} Factor: ${lt1.sstBestFactor || '0.86-0.89'} ${DOT} Intervalo: ${lt1.sstBestDuration || '?'}min`}
+                                        </div>
+                                        <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', marginTop: '0.2rem' }}>
+                                            {`${GEQ}15min ${DASH} NP/0.86 | 12${ENDASH}14min ${DASH} NP/0.89 | <12min excluido`}
+                                        </div>
+                                        <div style={{ ...row, marginTop: '0.3rem', paddingTop: '0.3rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                                            <span style={{ ...T.label, fontSize: '0.7rem', opacity: 0.7 }}>
+                                                {lt1.blendMode === 'consistent_80_20'
+                                                    ? `FTP = max(80%SST + 20%LT1, SST${TIMES}0.97)`
+                                                    : `FTP = max(75%SST + 25%LT1, SST${TIMES}0.97)`}
+                                            </span>
+                                            <span style={{ ...T.value, fontSize: '0.75rem', opacity: 0.7 }}>{`~${lt1.estimatedRealFTP} W`}</span>
+                                        </div>
+                                        {lt1.blendMode === 'consistent_80_20' && (
+                                            <div style={{ fontSize: '0.6rem', color: 'var(--green)', marginTop: '0.25rem', fontWeight: 700 }}>
+                                                {`${GEQ}2 sesiones SST en 14 dias ${DASH} modo 80/20 activado`}
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 {lt1.loadingSst && (
                                     <div style={{ ...row, marginTop: '-0.2rem' }}>
-                                        <span style={{ ...T.label, fontSize: '0.65rem', opacity: 0.5, fontStyle: 'italic', paddingLeft: '0.75rem' }}>Analizando series SST...</span>
+                                        <span style={{ ...T.label, fontSize: '0.65rem', opacity: 0.5, fontStyle: 'italic', paddingLeft: '0.75rem' }}>Analizando intervalos SST (v2)...</span>
                                     </div>
                                 )}
+
                                 <div style={divider} />
 
                                 <div style={{ padding: '0.6rem 0.85rem', borderRadius: '10px', background: `${lt1.confidenceColor}08`, border: `1px solid ${lt1.confidenceColor}20`, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -682,7 +772,9 @@ const CoachLabView = ({ historyData = [] }) => {
                                 <p style={T.question}>{'De donde salen estos numeros?'}</p>
                                 <p style={T.meta}>{`${lt1.sessions.length} sesiones (${lt1.nA}A + ${lt1.nB}B + ${lt1.nC}C) ${DOT} Peso total: ${lt1.totalQuality.toFixed(1)} ${DOT} NP ponderada: ${lt1.weightedNP} W ${DOT} NP corr: ${lt1.npCorrected} W`}</p>
                                 <p style={{ ...T.meta, marginTop: '0.25rem' }}>{`LT1 = sum(NP${TIMES}peso) / sum(peso) ${DOT} NP_corr = NP${TIMES}(1${MINUS}0.08${TIMES}%Z3)`}</p>
-                                <p style={{ ...T.meta, marginTop: '0.25rem' }}>{`FTP_final = 0.6${TIMES}Max(SST_sesion ${DOT} NP/0.89) + 0.4${TIMES}FTP_LT1`}</p>
+                                <p style={{ ...T.meta, marginTop: '0.25rem' }}>{`FTP_SST = NP_mejor_intervalo / factor(dur) ${DOT} ${GEQ}15min: /0.86 ${DOT} 12${ENDASH}14min: /0.89 ${DOT} <12min: excluido`}</p>
+                                <p style={{ ...T.meta, marginTop: '0.25rem' }}>{`FTP_final = max(A${TIMES}FTP_SST + B${TIMES}FTP_LT1, FTP_SST${TIMES}0.97)`}</p>
+                                <p style={{ ...T.meta, marginTop: '0.25rem' }}>{`Default: A=0.75, B=0.25 ${DOT} Si ${GEQ}2 SST en 14d: A=0.80, B=0.20`}</p>
                                 <div style={divider} />
                                 <div style={{ overflowX: 'auto' }}>
                                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>

@@ -8,8 +8,7 @@ import { getPlannedSession } from '../../services/mesocycleService';
  * 4 Bloques:
  * 1. Coherencia con el Plan
  * 2. Calidad Fisiológica del Estímulo
- * 3. Coste Fisiológico Real
- * 4. Impacto en el Microciclo
+ * 3. Análisis Fisiológico y Diagnóstico
  * 
  * Reglas especiales FA:
  * - FC media > 130 → alerta
@@ -352,26 +351,8 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe, dateStr }) => {
             if (recoveryTime) text += `Recuperación: ${recoveryTime.toFixed(0)} h\n\n`;
         }
 
-        // 4. COSTE
-        text += `4. Coste Fisiológico y RPE\n\n`;
-        text += `TSS Acumulado (ATL): ${atl ? atl.toFixed(0) : '—'}\n`;
-        text += `Fatiga Relativa (TSB): ${tsb !== null ? tsb : '—'}\n\n`;
-        text += `ESFUERZO PERCIBIDO (RPE)\n`;
-        if (rpe) {
-            text += `Valor: ${rpe}/10\n`;
-            text += rpe >= 7 ? "Esfuerzo alto percibido. Vigilar recuperación.\n\n" : "Esfuerzo bajo/medio. Adaptación positiva.\n\n";
-        } else {
-            text += `Pendiente de anotar.\n\n`;
-        }
-
-        // 5. IMPACTO
-        text += `5. Impacto en el Microciclo\n\n`;
-        text += `Próxima sesión: ${tomorrowImpact.tomorrowPlan.title || 'Descanso'}\n`;
-        if (tomorrowImpact.clear) {
-            text += `✓ Carga dentro de rango. Vigilar respuesta autonómica mañana.\n`;
-        } else {
-            tomorrowImpact.alerts.forEach(a => text += `⚠ ${a}\n`);
-        }
+        // 4. DATOS COMPLETOS
+        text += `4. Datos Completos de la Sesión\n\n`;
 
         navigator.clipboard.writeText(text);
         setCopied(true);
@@ -528,7 +509,7 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe, dateStr }) => {
                 {npReal && <div style={row}><span style={T.label}>Potencia Normalizada</span><span style={T.value}>{npReal} W</span></div>}
                 {apReal && <div style={row}><span style={T.label}>Potencia Media</span><span style={T.value}>{apReal} W</span></div>}
                 {workKj && <div style={row}><span style={T.label}>Trabajo</span><span style={T.value}>{workKj} kJ</span></div>}
-                {workAboveFtp !== null && <div style={row}><span style={T.label}>Trabajo > FTP</span><span style={T.value}>{workAboveFtp} kJ</span></div>}
+                {workAboveFtp !== null && <div style={row}><span style={T.label}>Trabajo &gt; FTP</span><span style={T.value}>{workAboveFtp} kJ</span></div>}
                 {fcMax !== null && <div style={row}><span style={T.label}>FC Máxima</span><span style={T.value}>{fcMax} bpm</span></div>}
                 {pwHr !== null && <div style={row}><span style={T.label}>Potencia / FC</span><span style={T.value}>{typeof pwHr === 'number' ? pwHr.toFixed(2) : pwHr}</span></div>}
                 {efficiency !== null && <div style={row}><span style={T.label}>Eficiencia</span><span style={T.value}>{efficiency.toFixed(2)}</span></div>}
@@ -549,48 +530,6 @@ const CoachPostWorkoutView = ({ todayData, onSaveRpe, dateStr }) => {
                 {recoveryTime !== null && <div style={row}><span style={T.label}>Recuperación</span><span style={T.value}>{recoveryTime.toFixed(0)} h</span></div>}
             </div>
 
-            {/* ═══ 4. COSTE Y PERCEPCIÓN ═══ */}
-            <div style={block}>
-                <p style={T.heading}>4. Coste Fisiológico y RPE</p>
-                <div style={divider} />
-
-                <div style={row}><span style={T.label}>TSS Acumulado (ATL)</span><span style={T.value}>{atl?.toFixed(0) || '—'}</span></div>
-                <div style={row}><span style={T.label}>Fatiga Relativa (TSB)</span><span style={{ ...T.value, color: tsb < -20 ? 'var(--red)' : '#fff' }}>{tsb || '—'}</span></div>
-
-                <div style={{ marginTop: '1rem' }}>
-                    <p style={{ ...T.meta, marginBottom: '0.6rem' }}>ESFUERZO PERCIBIDO (RPE)</p>
-                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(v => (
-                            <button key={v} onClick={() => handleRpe(v)} style={{
-                                width: '32px', height: '32px', borderRadius: '6px',
-                                border: rpe === v ? '2px solid var(--cyan)' : '1px solid rgba(255,255,255,0.1)',
-                                background: rpe === v ? 'rgba(6,182,212,0.2)' : 'transparent',
-                                color: rpe === v ? 'var(--cyan)' : 'rgba(255,255,255,0.6)',
-                                cursor: 'pointer', fontWeight: 900, fontSize: '0.75rem'
-                            }}>{v}</button>
-                        ))}
-                    </div>
-                    {rpe && (
-                        <p style={{ ...T.translation, fontSize: '0.8rem', fontStyle: 'italic', opacity: 0.8 }}>
-                            {rpe >= 7 ? "Esfuerzo alto percibido. Vigilar recuperación." : "Esfuerzo bajo/medio. Adaptación positiva."}
-                        </p>
-                    )}
-                </div>
-            </div>
-
-            {/* ═══ 5. IMPACTO EN EL MICROCICLO ═══ */}
-            <div style={block}>
-                <p style={T.heading}>5. Impacto en el Microciclo</p>
-                <div style={divider} />
-                <div style={row}><span style={T.label}>Próxima sesión</span><span style={T.value}>{tomorrowImpact.tomorrowPlan.title || 'Descanso'}</span></div>
-                <div style={{ marginTop: '0.75rem' }}>
-                    {tomorrowImpact.clear ? (
-                        <div style={T.alert}>✓ Carga dentro de rango. Vigilar respuesta autonómica mañana.</div>
-                    ) : (
-                        tomorrowImpact.alerts.map((a, i) => <div key={i} style={{ ...T.alert, background: 'rgba(239, 68, 68, 0.1)', borderLeft: '3px solid var(--red)' }}>⚠ {a}</div>)
-                    )}
-                </div>
-            </div>
 
         </div>
     );

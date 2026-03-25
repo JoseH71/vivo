@@ -33,19 +33,25 @@ self.addEventListener('activate', (event) => {
 
 // Fetch — network first, fallback to cache
 self.addEventListener('fetch', (event) => {
-    // Skip non-GET requests and API calls
+    // Skip non-GET requests, API calls and LOCALHOST during development
     if (event.request.method !== 'GET') return;
+    if (event.request.url.includes('localhost')) return;
     if (event.request.url.includes('googleapis.com')) return;
     if (event.request.url.includes('firestore')) return;
     if (event.request.url.includes('intervals.icu')) return;
+    
+    // 🔥 FIX EXPLÍCITO para evitar el error de "chrome-extension"
+    if (!event.request.url.startsWith('http')) return;
 
     event.respondWith(
         fetch(event.request)
             .then((response) => {
-                // Cache valid responses
-                if (response.ok) {
+                // Cache valid responses ONLY for http/https schemes
+                if (response.ok && event.request.url.startsWith('http')) {
                     const clone = response.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+                    caches.open(CACHE_NAME).then((cache) => {
+                        cache.put(event.request, clone).catch(() => {});
+                    });
                 }
                 return response;
             })

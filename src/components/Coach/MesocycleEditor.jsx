@@ -2,7 +2,7 @@
  * VIVO — Mesocycle Editor v1.0
  * Editor visual de mesociclos con guardado en Firestore.
  */
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Save, Calendar, Bike, Moon, Dumbbell, ChevronDown, ChevronUp, Loader2, Check } from 'lucide-react';
 import {
     getAllMesocycles, saveMesocycle, deleteMesocycle,
@@ -33,7 +33,7 @@ const MesocycleEditor = () => {
             setActiveMeso(all[0]);
         }
         setLoading(false);
-    }, []);
+    }, [activeMeso]); // Added activeMeso to satisfy deps although it might not be strictly needed for this logic
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -49,7 +49,7 @@ const MesocycleEditor = () => {
     };
 
     const handleDeleteMesocycle = async (id) => {
-        if (!confirm('¿Eliminar este mesociclo?')) return;
+        if (!window.confirm('¿Eliminar este mesociclo?')) return;
         await deleteMesocycle(id);
         if (activeMeso?.id === id) setActiveMeso(null);
         await loadData();
@@ -151,23 +151,58 @@ const MesocycleEditor = () => {
                 {mesocycles.map(m => {
                     const isActive = activeMeso?.id === m.id;
                     const today = new Date().toLocaleDateString('sv');
+                    // Mesociclo actual es el que incluye el día de hoy
                     const isCurrent = today >= m.startDate && today <= m.endDate;
+                    // Mesociclo pasado es el que ya terminó
+                    const isPast = today > m.endDate;
+
+                    // Formatear fechas para el botón: DD-MM
+                    const fmtDate = (iso) => {
+                        if (!iso) return '';
+                        const parts = iso.split('-');
+                        return `${parts[2]}-${parts[1]}`;
+                    };
+                    const dateRange = `${fmtDate(m.startDate)} al ${fmtDate(m.endDate)}`;
+                    
+                    // Lógica solicitada: si el nombre es "Plan Maestro" o "Semana de Oro", mostrar solo fechas
+                    const displayName = (m.name.includes('Plan Maestro') || m.name.includes('Semana de Oro')) 
+                        ? dateRange 
+                        : m.name;
+
+                    // Colores solicitados: Verde para el mesociclo activo (current), Rojo para el pasado
+                    let borderColor = isActive ? 'var(--cyan)' : 'var(--border)';
+                    let dotColor = 'transparent';
+                    let bgColor = isActive ? 'var(--bg-elevated)' : 'rgba(255,255,255,0.03)';
+                    let textColor = isActive ? 'var(--cyan)' : 'var(--text-secondary)';
+
+                    if (isCurrent) {
+                        borderColor = 'var(--green)';
+                        dotColor = 'var(--green)';
+                        if (isActive) textColor = 'var(--green)';
+                    } else if (isPast) {
+                        borderColor = 'rgba(239, 68, 68, 0.4)';
+                        dotColor = 'var(--red)';
+                        if (isActive) textColor = 'var(--red)';
+                    }
+
                     return (
                         <button
                             key={m.id}
                             onClick={() => setActiveMeso(m)}
                             className="tap-active"
                             style={{
-                                padding: '0.6rem 1rem', borderRadius: '14px',
-                                background: isActive ? 'var(--bg-elevated)' : 'rgba(255,255,255,0.03)',
-                                border: `1px solid ${isActive ? 'var(--cyan)' : 'var(--border)'}`,
-                                color: isActive ? 'var(--cyan)' : 'var(--text-secondary)',
-                                fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer',
+                                padding: '0.6rem 0.85rem', borderRadius: '14px',
+                                background: bgColor,
+                                border: `1px solid ${borderColor}`,
+                                color: textColor,
+                                fontSize: '0.68rem', fontWeight: 800, cursor: 'pointer',
                                 whiteSpace: 'nowrap', flexShrink: 0,
+                                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                transition: 'all 0.2s ease',
                             }}
                         >
-                            {isCurrent && <span style={{ marginRight: '0.3rem' }}>●</span>}
-                            {m.name}
+                            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: dotColor, boxShadow: dotColor !== 'transparent' ? `0 0 6px ${dotColor}` : 'none' }} />
+                            {displayName}
                         </button>
                     );
                 })}

@@ -162,5 +162,5 @@ export const getWeekForDate = (dateStr) => {
 };
 
 export const getPlannedSession = (dateStr) => {
-    return PLAN[dateStr] || { type: 'Descanso', title: 'Fuera de Plan', desc: '-', tss: 0 };
+    return PLAN[dateStr] || { type: 'Descanso', icon: 'Moon', title: 'DESCANSO (Ext.)', desc: 'Día fuera de rango de Mesociclo hardcodeado.', tss: 0 };
 };

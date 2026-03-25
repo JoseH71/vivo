@@ -11,11 +11,36 @@ export const registerServiceWorker = async () => {
     }
 
     try {
+        // RADICAL FIX: Always unregister existing service workers during development
+        // to prevent sticky caches breaking the app on localhost updates.
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (let registration of registrations) {
+            await registration.unregister();
+            console.log('[SW] 🧹 Old Service Worker forcefully unregistered');
+        }
+
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+        // Additional cleanup: wipe old caches completely
+        if (isLocalhost && window.caches) {
+            const keys = await window.caches.keys();
+            for (const key of keys) {
+                await window.caches.delete(key);
+                console.log('[SW] 🗑️ Cache deleted:', key);
+            }
+        }
+
+        if (isLocalhost) {
+            console.log('[SW] 🚫 Service worker registration skipped in development (localhost)');
+            return null;
+        }
+
+        // Only register in production
         const registration = await navigator.serviceWorker.register('/sw.js');
         console.log('[SW] ✅ Service Worker registered');
         return registration;
     } catch (e) {
-        console.error('[SW] Registration failed:', e);
+        console.error('[SW] Error managing service worker:', e);
         return null;
     }
 };

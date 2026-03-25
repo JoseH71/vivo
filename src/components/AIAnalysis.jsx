@@ -9,7 +9,7 @@ import {
     ChevronDown, ChevronUp, HelpCircle, Flame, Award, MessageCircle,
     Calendar, Dumbbell, Bike, Search, Clipboard, CheckSquare, Send
 } from 'lucide-react';
-import { chatWithCoach } from '../services/geminiService';
+import { chatWithCoach, analyzeHistoricalSeries } from '../services/geminiService';
 import { PLAN, MESOCYCLE_START_DATE, MESOCYCLE_END_DATE, getWeekForDate, getPlannedSession } from '../services/mesocycleService';
 
 /* ── Status Theme ── */
@@ -125,7 +125,7 @@ const getSleepColor = (label) => {
 /* ═══════════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════════ */
-const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData, error, activeMesocycleData }) => {
+const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData, error, activeMesocycleData, weeklyPlan = {} }) => {
     const [activeTab, setActiveTab] = useState('interpretacion');
     const [showDeepDive, setShowDeepDive] = useState(false);
     const [expandedQ, setExpandedQ] = useState(null);
@@ -136,6 +136,23 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
     const [chatMessages, setChatMessages] = useState([]);
     const [chatInput, setChatInput] = useState('');
     const [isChatLoading, setIsChatLoading] = useState(false);
+    const [historicalAnalysis, setHistoricalAnalysis] = useState(null);
+    const [isSeriesLoading, setIsSeriesLoading] = useState(false);
+
+    const handleSeriesAnalysis = async () => {
+        if (!intervalsData || intervalsData.length < 14) return;
+        setIsSeriesLoading(true);
+        try {
+            const result = await analyzeHistoricalSeries(intervalsData.slice(0, 45)); // Analyze last 45 days
+            setHistoricalAnalysis(result);
+            setActiveTab('interpretacion');
+            setShowDeepDive(true);
+        } catch (e) {
+            console.error('[Series Analysis] Error:', e);
+        } finally {
+            setIsSeriesLoading(false);
+        }
+    };
 
     const handleSendMessage = async () => {
         if (!chatInput.trim() || isChatLoading) return;
@@ -160,7 +177,7 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
             };
 
             const currentWeek = getWeekForDateDynamic(todayStr);
-            const todayPlanned = activeMesocycleData?.sessions?.[todayStr] || getPlannedSession(todayStr);
+            const todayPlanned = weeklyPlan[todayStr] || activeMesocycleData?.sessions?.[todayStr] || getPlannedSession(todayStr);
             
             const weekLabel = activeMesocycleData?.weekLabels?.[currentWeek - 1] || 'Fuera de mesociclo';
 
@@ -172,7 +189,7 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                 const d = new Date(weekStart);
                 d.setDate(weekStart.getDate() + i);
                 const dateStr = d.toLocaleDateString('sv');
-                const session = getPlannedSession(dateStr);
+                const session = weeklyPlan[dateStr] || activeMesocycleData?.sessions?.[dateStr] || getPlannedSession(dateStr);
                 const dayName = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i];
                 const isToday = dateStr === todayStr;
                 return `${isToday ? '→ ' : '  '}${dayName} ${dateStr}: ${session.type} - ${session.title}`;
@@ -264,8 +281,8 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                 todayPlan: data?.prescription?.title || 'No definido',
                 // 📋 Mesocycle / Training Plan
                 mesocycle: {
-                    startDate: MESOCYCLE_START_DATE,
-                    endDate: MESOCYCLE_END_DATE,
+                    startDate: activeMesocycleData?.startDate || MESOCYCLE_START_DATE,
+                    endDate: activeMesocycleData?.endDate || MESOCYCLE_END_DATE,
                     currentWeek,
                     weekLabel,
                     todayPlanned: todayPlanned ? `${todayPlanned.type} - ${todayPlanned.title}: ${todayPlanned.desc}` : 'Sin sesión planificada',
@@ -360,9 +377,20 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                             Obtén recomendaciones personalizadas.
                         </p>
                     </div>
-                    <button onClick={onRequestAnalysis} className="ia-cta-btn">
-                        <Brain size={23} /> Analizar Mi Día
-                    </button>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', justifyContent: 'center' }}>
+                        <button onClick={onRequestAnalysis} className="ia-cta-btn">
+                            <Brain size={23} /> Analizar Mi Día
+                        </button>
+                        <button 
+                            onClick={handleSeriesAnalysis} 
+                            disabled={isSeriesLoading}
+                            className="ia-refresh-btn" 
+                            style={{ padding: '0.85rem 1.3rem', borderRadius: '16px', background: 'rgba(255,255,255,0.04)' }}
+                        >
+                            {isSeriesLoading ? <Loader2 size={18} className="animate-spin" /> : <TrendingUp size={18} />}
+                            {isSeriesLoading ? 'Analizando Series...' : 'Análisis de Series (30-60d)'}
+                        </button>
+                    </div>
                 </div>
             </div>
         );
@@ -556,18 +584,29 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                     </div>
 
                     {/* Análisis técnico expandible */}
-                    {data.technicalDeepDive && (
+                    {(data.technicalDeepDive || historicalAnalysis) && (
                         <div className="card-glass" style={{ padding: '0', borderRadius: '22px', overflow: 'hidden' }}>
                             <button onClick={() => setShowDeepDive(!showDeepDive)} className="ia-expand-btn">
                                 <Activity size={16} style={{ color: 'var(--cyan)', opacity: 0.6 }} />
-                                <span>{showDeepDive ? 'Ocultar análisis técnico' : 'Ver análisis técnico detallado'}</span>
+                                <span>{showDeepDive ? 'Ocultar análisis profundo' : 'Ver análisis profundo / series'}</span>
                                 {showDeepDive ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                             </button>
                             {showDeepDive && (
-                                <div className="animate-fade-in" style={{ padding: '0 1.3rem 1rem' }}>
-                                    <p style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.7, margin: 0, fontWeight: 500 }}>
-                                        {data.technicalDeepDive}
-                                    </p>
+                                <div className="animate-fade-in" style={{ padding: '0 1.3rem 1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                    {historicalAnalysis && (
+                                        <div style={{ padding: '1rem', background: 'rgba(6,182,212,0.06)', borderRadius: '14px', border: '1px solid rgba(6,182,212,0.1)' }}>
+                                            <p style={{ fontSize: '0.7rem', fontWeight: 900, color: 'var(--cyan)', marginBottom: '0.8rem', textTransform: 'uppercase' }}>📊 Análisis de Patrones Históricos (VIVO Deep Dive)</p>
+                                            <p style={{ fontSize: '0.92rem', color: '#fff', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{historicalAnalysis}</p>
+                                        </div>
+                                    )}
+                                    {data.technicalDeepDive && (
+                                        <div style={{ paddingTop: historicalAnalysis ? '0.5rem' : 0 }}>
+                                            {!historicalAnalysis && <p style={{ fontSize: '0.7rem', fontWeight: 900, color: 'var(--cyan)', marginBottom: '0.8rem', textTransform: 'uppercase' }}>🔬 Análisis Técnico Diario</p>}
+                                            <p style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.7, margin: 0, fontWeight: 500 }}>
+                                                {data.technicalDeepDive}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -723,7 +762,21 @@ const AIAnalysis = ({ analysis, isLoading, onRequestAnalysis, iea, intervalsData
                             {/* Regenerar */}
                             <button onClick={onRequestAnalysis} className="ia-refresh-btn" style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', borderRadius: '14px' }}>
                                 <RefreshCw size={17} />
-                                <span style={{ fontSize: '0.85rem' }}>Regenerar Análisis Completo</span>
+                                <span style={{ fontSize: '0.85rem' }}>Regenerar Análisis Diario</span>
+                            </button>
+
+                            {/* Series Analysis */}
+                            <button 
+                                onClick={handleSeriesAnalysis} 
+                                disabled={isSeriesLoading}
+                                className="ia-refresh-btn" 
+                                style={{ 
+                                    width: '100%', justifyContent: 'center', padding: '0.75rem', borderRadius: '14px',
+                                    background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)'
+                                }}
+                            >
+                                {isSeriesLoading ? <Loader2 size={17} className="animate-spin" /> : <TrendingUp size={17} style={{ color: 'var(--cyan)' }} />}
+                                <span style={{ fontSize: '0.85rem', color: 'var(--cyan)', fontWeight: 800 }}>Análisis de Series (30-60d)</span>
                             </button>
                         </div>
                     </div>

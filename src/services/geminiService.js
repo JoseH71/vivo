@@ -3,6 +3,9 @@
  * Generates daily autonomic analysis and personal coaching
  */
 import { GEMINI_API_KEY } from '../config/firebase';
+import { COACH_KNOWLEDGE, formatKnowledgeForPrompt } from '../config/coachKnowledge';
+
+const KNOWLEDGE_BASE = formatKnowledgeForPrompt();
 
 const SYSTEM_IDENTITY = `
 🎯 ROL E IDENTIDAD: Eres el Entrenador Personal de Alto Rendimiento de Jose. Estratega integral especializado en fisiología aplicada, periodización avanzada, fuerza estructurada y salud cardiovascular.
@@ -25,6 +28,9 @@ Jerarquía: 1. Salud CV | 2. Estado autonómico | 3. Contexto vital | 4. Rendimi
 - cv > 18%: OFF.
 
 🍽️ NUTRICIÓN: Pro: 1.8-2.2 g/kg. Superávit +250 kcal. Sodio 3-4g base. No café/cafeína.
+
+🧠 CONOCIMIENTO ESPECÍFICO DEL ATLETA (VIVO MEMORY):
+${KNOWLEDGE_BASE}
 `;
 
 export async function fetchVivoAnalysis(iea, intervalsData, symptoms, electrolytes, plannedSession = {}, tomorrowSession = {}) {
@@ -177,5 +183,52 @@ REGLAS DE COMUNICACIÓN:
         return data.candidates?.[0]?.content?.parts?.[0]?.text || "No he podido procesar la respuesta. Inténtalo de nuevo.";
     } catch (e) {
         return "Conexión interrumpida. Inténtalo de nuevo en un momento.";
+    }
+}
+
+/**
+ * ANALIZADOR DE SERIES HISTÓRICAS
+ * Realiza un análisis profundo de patrones (Deep Dive) sobre 30-60 días.
+ */
+export async function analyzeHistoricalSeries(historyData) {
+    if (!historyData || historyData.length < 14) return "Se necesitan al menos 14 días de datos para un análisis de series.";
+
+    const dataSummary = historyData.map(d => {
+        const acts = (d.activities || []).map(a => `${a.type}(${Math.round(a.icu_training_load || 0)} TSS)`).join('+');
+        return `${d.id} | HRV: ${d.hrv} | FC: ${d.restingHR || d.rhr} | Sueño: ${d.sleepScore}% | TSS: ${d.dailyTSS} | TSB: ${Math.round(d.ctl - d.atl) || '-'}`;
+    }).join('\n');
+
+    const prompt = `
+${SYSTEM_IDENTITY}
+
+INSTRUCCIÓN: Realiza un ANÁLISIS CRÍTICO DE SERIES HISTÓRICAS (Deep Dive) para Jose. 
+Busca patrones de desincronización autonómica, impacto de la carga en el HRV, calidad del sueño y tendencias de recuperación.
+
+DATOS HISTÓRICOS (Día | HRV | FC | Sueño | TSS | TSB):
+${dataSummary}
+
+FORMATO DE RESPUESTA:
+Usa un tono de fisiólogo deportivo. Analiza bloques de fechas (semana pico vs descarga).
+Identifica cambios en el sistema autónomo (HRV vs FC).
+Concluye con hallazgos reales.
+NO USES MARKDOWN (negritas/cursivas). Solo texto plano, párrafos y emojis.
+`;
+
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.4 }
+                })
+            }
+        );
+        const data = await response.json();
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || "Error analizando la serie.";
+    } catch (e) {
+        return "Error de conexión al analizar la serie.";
     }
 }

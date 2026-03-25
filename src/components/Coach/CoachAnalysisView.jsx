@@ -3,11 +3,12 @@
  * Buscador de actividades históricas con comparativa de series/laps
  * basado en los datos de Intervals.icu (Datos > TRABAJO)
  */
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Search, Loader2, ChevronDown, ChevronUp, Calendar, Zap, Activity, Copy, Check } from 'lucide-react';
 import { ATHLETE_ID, INTERVALS_API_KEY } from '../../config/firebase';
 import { fetchActivityLaps, parseIntervalSummary } from '../../services/intervalsService';
 import { HISTORICAL_SST } from '../../data/historicalSST';
+import CoachPostWorkoutView from './CoachPostWorkoutView';
 
 // Las funciones fetchActivityLaps y parseIntervalSummary ahora se importan de intervalsService.js
 
@@ -33,11 +34,15 @@ const val = (v, decimals = 0, unit = '') => {
 };
 
 // ── Componente: Fila de actividad expandible ───────────────────────
-const ActivityRow = ({ activity }) => {
+const ActivityRow = ({ activity, dayData }) => {
     const isHistorical = activity._isHistorical === true;
     const [expanded, setExpanded] = useState(false);
+    const [showFullAnalysis, setShowFullAnalysis] = useState(false);
     const [laps, setLaps] = useState(isHistorical ? activity.intervals : null);
     const [loading, setLoading] = useState(false);
+
+    // Evitar parpadeos en carga de series
+    const displayLoading = loading && !laps;
 
     const toggleExpand = async () => {
         if (!expanded && laps === null && !isHistorical) {
@@ -55,82 +60,125 @@ const ActivityRow = ({ activity }) => {
             setLaps(workIntervals);
             setLoading(false);
         }
+        if (showFullAnalysis && !expanded) setShowFullAnalysis(false);
         setExpanded(!expanded);
+    };
+
+    const toggleFullAnalysis = () => {
+        setShowFullAnalysis(!showFullAnalysis);
+        if (expanded) setExpanded(false);
     };
 
     const accentColor = expanded ? 'var(--cyan)' : 'rgba(255,255,255,0.5)';
 
     return (
         <div style={{ marginBottom: '0.5rem' }}>
-            {/* Cabecera de actividad */}
-            <button
-                onClick={toggleExpand}
+            {/* Cabecera de actividad - Contenedor Principal */}
+            <div
                 style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem',
-                    padding: '0.75rem 1rem',
-                    background: expanded ? 'rgba(6,182,212,0.06)' : 'rgba(255,255,255,0.02)',
-                    border: `1px solid ${expanded ? 'rgba(6,182,212,0.3)' : 'rgba(255,255,255,0.07)'}`,
-                    borderRadius: expanded ? '16px 16px 0 0' : '16px',
-                    cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left',
-                    color: 'inherit'
+                    width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    background: expanded || showFullAnalysis ? 'rgba(6,182,212,0.06)' : 'rgba(255,255,255,0.02)',
+                    border: `1px solid ${expanded || showFullAnalysis ? 'rgba(6,182,212,0.3)' : 'rgba(255,255,255,0.07)'}`,
+                    borderRadius: expanded || showFullAnalysis ? '16px 16px 0 0' : '16px',
+                    transition: 'all 0.2s'
                 }}
             >
-                <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
-                            {activity.name}
-                        </span>
-                        {isHistorical && (
-                            <span style={{
-                                fontSize: '0.5rem', fontWeight: 900, color: '#f97316',
-                                background: 'rgba(249,115,22,0.15)', padding: '2px 6px',
-                                borderRadius: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'
-                            }}>Manual</span>
-                        )}
-                    </div>
-                    <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.45)' }}>
-                        {formatDate(activity.start_date_local)}
-                    </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'center' }}>
-                    {/* NP */}
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>NP</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
-                            {val(activity.icu_weighted_avg_watts)}w
+                {/* Botón de Expansión (Área de texto) */}
+                <div 
+                    onClick={toggleExpand}
+                    style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem' }}
+                >
+                    <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
+                                {activity.name}
+                            </span>
+                            {isHistorical && (
+                                <span style={{
+                                    fontSize: '0.5rem', fontWeight: 900, color: '#f97316',
+                                    background: 'rgba(249,115,22,0.15)', padding: '2px 6px',
+                                    borderRadius: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'
+                                }}>Manual</span>
+                            )}
                         </div>
-                    </div>
-                    {/* IF */}
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>IF</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
-                            {val(activity.icu_intensity, 2)}
-                        </div>
-                    </div>
-                    {/* TSS */}
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>TSS</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--purple)', fontFamily: 'var(--font-mono)' }}>
-                            {val(activity.icu_training_load)}
-                        </div>
-                    </div>
-                    {/* FC media */}
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>FC</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>
-                            {val(activity.average_heartrate)}
+                        <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.45)' }}>
+                            {formatDate(activity.start_date_local)}
                         </div>
                     </div>
 
-                    {loading
-                        ? <Loader2 size={16} className="animate-spin" style={{ color: 'var(--cyan)' }} />
-                        : expanded
-                            ? <ChevronUp size={16} style={{ color: accentColor }} />
-                            : <ChevronDown size={16} style={{ color: accentColor }} />
-                    }
+                    <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                        {/* NP */}
+                        <div style={{ textAlign: 'right', minWidth: '35px' }}>
+                            <div style={{ fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>NP</div>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
+                                {val(activity.icu_weighted_avg_watts)}
+                            </div>
+                        </div>
+                        {/* IF */}
+                        <div style={{ textAlign: 'right', minWidth: '30px' }}>
+                            <div style={{ fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>IF</div>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
+                                {val(activity.icu_intensity, 2)}
+                            </div>
+                        </div>
+                        {/* TSS */}
+                        <div style={{ textAlign: 'right', minWidth: '30px' }}>
+                            <div style={{ fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>TSS</div>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--purple)', fontFamily: 'var(--font-mono)' }}>
+                                {val(activity.icu_training_load)}
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </button>
+
+                {/* Acciones Separadas */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.25rem' }}>
+                    {!isHistorical && dayData && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); toggleFullAnalysis(); }}
+                            title="Análisis Completo"
+                            style={{
+                                background: showFullAnalysis ? 'var(--cyan)' : 'rgba(255,255,255,0.05)',
+                                color: showFullAnalysis ? '#000' : 'var(--cyan)',
+                                border: `1px solid ${showFullAnalysis ? 'var(--cyan)' : 'rgba(6,182,212,0.3)'}`,
+                                borderRadius: '8px', padding: '6px 10px', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: '4px',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            <Activity size={12} />
+                            <span style={{ fontSize: '0.55rem', fontWeight: 900, textTransform: 'uppercase' }}>Analizar</span>
+                        </button>
+                    )}
+
+                    <div 
+                        onClick={toggleExpand}
+                        style={{ cursor: 'pointer', padding: '0.25rem' }}
+                    >
+                        {displayLoading
+                            ? <Loader2 size={16} className="animate-spin" style={{ color: 'var(--cyan)' }} />
+                            : expanded
+                                ? <ChevronUp size={16} style={{ color: accentColor }} />
+                                : <ChevronDown size={16} style={{ color: accentColor }} />
+                        }
+                    </div>
+                </div>
+            </div>
+
+            {/* Análisis Completo (CoachPostWorkoutView) */}
+            {showFullAnalysis && dayData && (
+                <div style={{
+                    background: 'rgba(0,0,0,0.3)',
+                    border: '1px solid var(--cyan)', borderTop: 'none',
+                    borderRadius: '0 0 16px 16px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                    animation: 'slideDown 0.3s ease-out'
+                }}>
+                    <CoachPostWorkoutView todayData={dayData} dateStr={(activity.start_date_local || activity._dayId || '').split('T')[0]} />
+                </div>
+            )}
 
             {/* Tabla de laps */}
             {expanded && (
@@ -221,14 +269,26 @@ const CoachAnalysisView = ({ historyData = [] }) => {
     const [query, setQuery] = useState('SST');
     const [dateFrom, setDateFrom] = useState(() => {
         const d = new Date();
-        d.setDate(d.getDate() - 180);
+        d.setDate(d.getDate() - 730); // 2 años atrás para búsqueda histórica completa
         return d.toLocaleDateString('sv');
     });
     const [dateTo, setDateTo] = useState(new Date().toLocaleDateString('sv'));
     const [results, setResults] = useState(null);
+    const [searching, setSearching] = useState(false);
     const [comparing, setComparing] = useState(false);
     const [comparisonData, setComparisonData] = useState(null);
     const [copied, setCopied] = useState(false);
+
+    // Mapa de días para acceso rápido al analizar
+    const daysMap = useMemo(() => {
+        const map = new Map();
+        if (historyData) {
+            historyData.forEach(day => {
+                map.set(day.id || day.date, day);
+            });
+        }
+        return map;
+    }, [historyData]);
 
     const copyToClipboard = () => {
         if (!comparisonData || comparisonData.length === 0) return;
@@ -256,9 +316,32 @@ const CoachAnalysisView = ({ historyData = [] }) => {
     };
 
     const search = useCallback(() => {
-        if (!query.trim()) return;
-        const q = query.toLowerCase().trim();
-        console.log('[Analysis] Searching for:', q, 'Date range:', dateFrom, 'to', dateTo);
+        setSearching(true);
+        console.log('[Analysis] Starting search...');
+        
+        // Timeout para simular carga y asegurar que el estado se procesa
+        setTimeout(() => {
+            const q = (query || '').toLowerCase().trim();
+            console.log('[Analysis] Searching for:', q || '(all)', 'Range:', dateFrom, 'to', dateTo);
+
+        // Detectar si la query es una fecha tipo DD-MM, DD/MM, YYYY-MM-DD
+        const dateMatchStr = q.match(/^(\d{1,4})[-/](\d{1,2})[-/]?(\d{2,4})?$/);
+        let matchMonth = null, matchDay = null, matchYear = null;
+        if (dateMatchStr) {
+            // Caso YYYY-MM-DD
+            if (dateMatchStr[1].length === 4) {
+                matchYear = dateMatchStr[1];
+                matchMonth = dateMatchStr[2].padStart(2, '0');
+                matchDay = dateMatchStr[3]?.padStart(2, '0');
+            } else {
+                // Caso DD-MM or DD-MM-YYYY
+                matchDay = dateMatchStr[1].padStart(2, '0');
+                matchMonth = dateMatchStr[2].padStart(2, '0');
+                if (dateMatchStr[3]) {
+                    matchYear = dateMatchStr[3].length === 2 ? '20' + dateMatchStr[3] : dateMatchStr[3];
+                }
+            }
+        }
 
         // 1. Buscar en Intervals (datos en memoria)
         const allActivities = (historyData || []).flatMap(day =>
@@ -268,20 +351,51 @@ const CoachAnalysisView = ({ historyData = [] }) => {
 
         // 2. Inyectar datos históricos manuales
         const historicalMatches = (HISTORICAL_SST || []).filter(h => {
-            const date = (h.start_date_local || '').split('T')[0];
-            if (date < dateFrom || date > dateTo) return false;
+            const date = (h.start_date_local || h.date || '').split('T')[0];
             const name = (h.name || '').toLowerCase();
             const desc = (h.description || '').toLowerCase();
+
+            // Si es búsqueda por fecha específica, ignorar el rango de fechas
+            if (matchMonth && matchDay) {
+                const dateParts = date.split('-'); 
+                const mMatch = dateParts[1] === matchMonth;
+                const dMatch = dateParts[2] === matchDay;
+                const yMatch = matchYear ? dateParts[0] === matchYear : true;
+                if (mMatch && dMatch && yMatch) return true;
+                if (q.length > 5 && date.includes(q)) return true;
+                return false;
+            }
+
+            // Para búsquedas de texto, si la fecha está fuera del rango, solo filtrar si el rango ES explícito
+            // Pero por defecto, vamos a ser más permisivos
+            if (date < dateFrom || date > dateTo) return false;
+
             return name.includes(q) || desc.includes(q);
         });
 
         // 3. Buscar en Intervals por fecha/query
         const found = allActivities.filter(a => {
             const date = (a.start_date_local || a._dayId || '').split('T')[0];
-            if (date < dateFrom || date > dateTo) return false;
             const name = (a.name || '').toLowerCase();
             const desc = (a.description || '').toLowerCase();
-            return name.includes(q) || desc.includes(q);
+            const workoutDesc = (a.workout_description || '').toLowerCase();
+
+            if (matchMonth && matchDay) {
+                const dateParts = date.split('-');
+                const mMatch = dateParts[1] === matchMonth;
+                const dMatch = dateParts[2] === matchDay;
+                const yMatch = matchYear ? dateParts[0] === matchYear : true;
+                if (mMatch && dMatch && yMatch) return true;
+                if (q.length > 5 && date.includes(q)) return true;
+                return false;
+            }
+            if (date < dateFrom || date > dateTo) return false;
+
+            // Si no hay query, mostrar todo lo que esté en el rango
+            if (!q) return true;
+
+            const matches = name.includes(q) || desc.includes(q) || workoutDesc.includes(q);
+            return matches;
         });
         console.log('[Analysis] Matches found in Intervals:', found.length, 'Matches in Historical:', historicalMatches.length);
 
@@ -304,17 +418,17 @@ const CoachAnalysisView = ({ historyData = [] }) => {
         });
 
         setResults(combined);
-        setComparisonData(null); // Reset al buscar de nuevo
+        setComparisonData(null); 
+        setSearching(false);
+        }, 100);
     }, [query, dateFrom, dateTo, historyData]);
 
-    // Búsqueda automática: disparar cuando llegan datos o cambia la query
+    // Búsqueda automática: disparar cuando llegan datos
     // Solo si aún no hemos tenido éxito encontrando nada sólido o es la carga inicial
     useEffect(() => {
-        if (historyData && historyData.length > 0) {
-            // Si es la carga inicial (null) o si estábamos en vacío pero han llegado datos nuevos
-            if (results === null || (results.length === 0 && historyData.length > 0)) {
-                search();
-            }
+        if (historyData && historyData.length > 0 && results === null) {
+            console.log('[Analysis] Auto-searching initial query...');
+            search();
         }
     }, [historyData, results, search]);
 
@@ -323,88 +437,155 @@ const CoachAnalysisView = ({ historyData = [] }) => {
         if (!results || results.length === 0) return;
         setComparing(true);
 
-        const rows = [];
+        try {
+            const allRows = await Promise.all(results.map(async (activity) => {
+                const activityRows = [];
+                const isHist = activity._isHistorical === true;
+                const dateStr = (activity.start_date_local || activity._dayId || '').split('T')[0];
+                const formattedDate = dateStr.split('-').reverse().join('-');
 
-        for (const activity of results) {
-            const isHist = activity._isHistorical === true;
-            const dateStr = (activity.start_date_local || activity._dayId || '').split('T')[0];
-            const formattedDate = dateStr.split('-').reverse().join('-');
+                let series = [];
 
-            let series = [];
+                if (isHist) {
+                    series = (activity.intervals || []).filter(s => {
+                        const hr = s.average_heartrate ?? 0;
+                        return hr > 115; // Umbral más flexible (antes 135)
+                    });
+                } else {
+                    const rawId = activity.id || activity.activity_id;
+                    const data = await fetchActivityLaps(rawId);
+                    series = (data || []).filter(lap => {
+                        const hr = lap.average_heartrate ?? lap.avg_hr ?? lap.average_hr ?? 0;
+                        // Incluir series de TRABAJO (Intervals suele marcarlas) o por FC
+                        return lap.type === 'WORK' || hr > 115;
+                    });
+                }
 
-            if (isHist) {
-                series = (activity.intervals || []).filter(s => {
+                if (series.length === 0) return [];
+
+                const actDecoupling = activity.decoupling ?? activity.icu_aerobic_decoupling ?? null;
+                const actMaxHr = activity.max_heartrate ?? null;
+                const actTemp = activity.average_temp ?? activity.average_weather_temp ?? activity.average_feels_like ?? null;
+
+                series.forEach((s, idx) => {
+                    const power = s.average_watts ?? s.weighted_average_watts ?? 0;
                     const hr = s.average_heartrate ?? 0;
-                    return hr > 135;
+                    const duration = s.moving_time ?? s.elapsed_time ?? 0;
+                    const durationMin = Math.round(duration / 60);
+                    const efficiency = hr > 0 ? (power / hr).toFixed(2) : '—';
+
+                    const decoupling = s.decoupling ?? actDecoupling;
+                    const maxHr = s.max_heartrate ?? actMaxHr;
+                    const temp = s.average_temp ?? s.average_weather_temp ?? actTemp;
+
+                    activityRows.push({
+                        date: formattedDate,
+                        name: activity.name || '—',
+                        serie: idx + 1,
+                        duration: `${durationMin}'`,
+                        power,
+                        hr,
+                        efficiency: parseFloat(efficiency) || 0,
+                        decoupling: decoupling !== null ? parseFloat(decoupling) : null,
+                        maxHr: maxHr !== null ? Math.round(maxHr) : null,
+                        temp: temp !== null ? Math.round(temp) : null,
+                        isHistorical: isHist,
+                        _sortDate: dateStr,
+                    });
                 });
-            } else {
-                const rawId = activity.id || activity.activity_id;
-                const data = await fetchActivityLaps(rawId);
-                series = data.filter(lap => {
-                    const hr = lap.average_heartrate ?? lap.avg_hr ?? lap.average_hr ?? 0;
-                    return hr > 135;
-                });
-            }
 
-            if (series.length === 0) continue;
+                return activityRows;
+            }));
 
-            // Datos de nivel de actividad (no por lap individual)
-            // Intervals.icu los devuelve en el objeto actividad, no en cada intervalo
-            const actDecoupling = activity.decoupling ?? activity.icu_aerobic_decoupling ?? null;
-            const actMaxHr = activity.max_heartrate ?? null;
-            const actTemp = activity.average_temp ?? activity.average_feels_like ?? null;
-
-            // Una fila por cada serie individual
-            series.forEach((s, idx) => {
-                const power = s.average_watts ?? s.weighted_average_watts ?? 0;
-                const hr = s.average_heartrate ?? 0;
-                const duration = s.moving_time ?? s.elapsed_time ?? 0;
-                const durationMin = Math.round(duration / 60);
-                const efficiency = hr > 0 ? (power / hr).toFixed(2) : '—';
-
-                // Nombres exactos confirmados por API de icu_intervals
-                const decoupling = s.decoupling ?? actDecoupling;
-                const maxHr = s.max_heartrate ?? actMaxHr;
-                const temp = s.average_temp ?? s.average_weather_temp ?? actTemp;
-
-                rows.push({
-                    date: formattedDate,
-                    name: activity.name || '—',
-                    serie: idx + 1,
-                    duration: `${durationMin}'`,
-                    power,
-                    hr,
-                    efficiency: parseFloat(efficiency) || 0,
-                    decoupling: decoupling !== null ? parseFloat(decoupling) : null,
-                    maxHr: maxHr !== null ? Math.round(maxHr) : null,
-                    temp: temp !== null ? Math.round(temp) : null,
-                    isHistorical: isHist,
-                    _sortDate: dateStr,
-                });
+            const flatRows = allRows.flat();
+            
+            // Ordenar de más antigua a más reciente
+            flatRows.sort((a, b) => {
+                if (a._sortDate !== b._sortDate) return a._sortDate.localeCompare(b._sortDate);
+                return a.serie - b.serie;
             });
+
+            setComparisonData(flatRows);
+        } catch (error) {
+            console.error('[Analysis] Comparison failed:', error);
+        } finally {
+            setComparing(false);
         }
-
-        // Ordenar de más antigua a más reciente
-        rows.sort((a, b) => {
-            if (a._sortDate !== b._sortDate) return a._sortDate.localeCompare(b._sortDate);
-            return a.serie - b.serie;
-        });
-
-        setComparisonData(rows);
-        setComparing(false);
     }, [results]);
 
     const handleKey = (e) => { if (e.key === 'Enter') search(); };
 
+    // Buscar las actividades más recientes completadas para el analizador rápido
+    const recentActivities = useMemo(() => {
+        if (!historyData || !Array.isArray(historyData)) return [];
+        return historyData.filter(day => day.activities && day.activities.length > 0 && day.activities.some(a => (a.icu_training_load || a.tss || 0) > 0)).slice(0, 7); // Útimos 7 días de entreno reales
+    }, [historyData]);
+
+    const [selectedRecentDate, setSelectedRecentDate] = useState(() => {
+        const todayStr = new Date().toLocaleDateString('sv');
+        return todayStr; // Por defecto empezamos con hoy, aunque no haya
+    });
+
+    // Cambiar la inicialización para auto-seleccionar el completado más reciente
+    useEffect(() => {
+        if (recentActivities.length > 0 && selectedRecentDate === new Date().toLocaleDateString('sv')) {
+            const todayStr = new Date().toLocaleDateString('sv');
+            const hasToday = recentActivities.some(d => (d.id || d.date) === todayStr);
+            if (!hasToday) {
+                setSelectedRecentDate(recentActivities[0].id || recentActivities[0].date);
+            }
+        }
+    }, [recentActivities, selectedRecentDate]);
+
+    const recentDataToAnalyze = useMemo(() => {
+        return recentActivities.find(d => (d.id === selectedRecentDate || d.date === selectedRecentDate)) || null;
+    }, [recentActivities, selectedRecentDate]);
+
     return (
-        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingBottom: '2rem' }}>
+
+            {/* ── Analizador de Entrenamientos Recientes ── */}
+            {recentActivities.length > 0 && (
+                <div style={{ marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.5rem', marginBottom: '0.5rem' }} className="hide-scrollbar">
+                        {recentActivities.map(day => {
+                            const dStr = day.id || day.date;
+                            const isSelected = selectedRecentDate === dStr;
+                            const d = new Date(dStr);
+                            const dayName = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'][d.getDay()];
+                            
+                            return (
+                                <button
+                                    key={dStr}
+                                    onClick={() => setSelectedRecentDate(dStr)}
+                                    style={{
+                                        padding: '0.5rem 1rem', borderRadius: '12px', border: 'none',
+                                        background: isSelected ? 'var(--cyan)' : 'rgba(255,255,255,0.05)',
+                                        color: isSelected ? '#000' : '#fff', opacity: isSelected ? 1 : 0.6,
+                                        fontSize: '0.75rem', fontWeight: 900, cursor: 'pointer',
+                                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
+                                        flexShrink: 0
+                                    }}
+                                >
+                                    <span>{dayName} {d.getDate()}</span>
+                                    <span style={{ fontSize: '0.55rem', opacity: 0.8 }}>{dStr === new Date().toLocaleDateString('sv') ? 'HOY' : 'COMPLETADO'}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {recentDataToAnalyze && (
+                        <CoachPostWorkoutView todayData={recentDataToAnalyze} dateStr={selectedRecentDate} />
+                    )}
+                </div>
+            )}
+
 
             {/* ── Buscador ── */}
             <div className="card-glass" style={{ padding: '1.25rem', borderRadius: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
                     <Search size={14} style={{ color: 'var(--cyan)' }} />
                     <span className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--cyan)' }}>
-                        Explorador de Actividades
+                        Comparador Histórico (Microscopio)
                     </span>
                 </div>
 
@@ -466,21 +647,29 @@ const CoachAnalysisView = ({ historyData = [] }) => {
 
                 <button
                     onClick={search}
+                    disabled={searching}
                     style={{
                         width: '100%', padding: '0.75rem',
-                        background: 'var(--cyan)',
+                        background: searching ? 'rgba(6,182,212,0.5)' : 'var(--cyan)',
                         border: 'none', borderRadius: '14px',
                         color: '#000', fontSize: '0.85rem', fontWeight: 900,
-                        cursor: 'pointer', transition: 'opacity 0.2s',
+                        cursor: searching ? 'not-allowed' : 'pointer', transition: 'all 0.2s',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
                     }}
                 >
-                    <Search size={16} /> Buscar Actividades
+                    {searching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} 
+                    {searching ? 'Buscando...' : 'Buscar Actividades'}
                 </button>
             </div>
 
             {/* ── Resultados ── */}
-            {results !== null && (
+            {searching && (
+                <div style={{ padding: '2rem', textAlign: 'center' }}>
+                    <Loader2 size={24} className="animate-spin" style={{ color: 'var(--cyan)', margin: '0 auto' }} />
+                </div>
+            )}
+
+            {!searching && results !== null && (
                 <div>
                     {/* Header de resultados */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', padding: '0 0.25rem' }}>
@@ -620,7 +809,11 @@ const CoachAnalysisView = ({ historyData = [] }) => {
                                 Pulsa una actividad para ver sus series individuales ↓
                             </div>
                             {results.map(activity => (
-                                <ActivityRow key={activity.id} activity={activity} />
+                                <ActivityRow 
+                                    key={activity.id || activity.activity_id + activity.start_date_local} 
+                                    activity={activity} 
+                                    dayData={daysMap.get(activity._dayId)}
+                                />
                             ))}
                         </div>
                     )}
@@ -632,7 +825,7 @@ const CoachAnalysisView = ({ historyData = [] }) => {
                 <div className="card-glass" style={{ padding: '2.5rem', textAlign: 'center', borderRadius: '24px', opacity: 0.6 }}>
                     <Zap size={28} style={{ color: 'var(--cyan)', marginBottom: '0.75rem', opacity: 0.5 }} />
                     <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', margin: 0, lineHeight: 1.5 }}>
-                        Escribe "SST", "Z2" o cualquier término<br />que uses en las descripciones de Intervals.
+                        Escribe "SST", "Z2" o busca una fecha concreta como "29-01"<br />para ver análisis y series.
                     </p>
                 </div>
             )}

@@ -10,10 +10,13 @@
   },
   "dependencies": {
     "firebase": "^12.7.0",
+    "jimp": "^1.6.0",
     "lucide-react": "^0.562.0",
+    "png-to-ico": "^3.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "recharts": "^2.15.3"
+    "recharts": "^2.15.3",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",

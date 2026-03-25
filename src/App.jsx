@@ -12,6 +12,7 @@ import { calculateIEA } from './engine/ieaEngine';
 import { calculateDecision } from './engine/decisionEngine';
 import { getDailyRecommendation } from './engine/recommendationEngine';
 import { getActiveMesocycle, seedPlanMaestroV5, getAllMesocycles } from './services/mesocycleFirestoreService';
+import { getPlannedSession } from './services/mesocycleService';
 import { requestNotificationPermission, isNotificationEnabled, scheduleLocalReminder, getReminderConfig } from './services/notificationService';
 import { Bell, BellOff } from 'lucide-react';
 
@@ -43,7 +44,9 @@ import {
 } from 'lucide-react';
 import { generateCoachReport } from './services/reportService';
 
+// Fecha actual del sistema (Hoy 19-03)
 const todayISO = () => new Date().toLocaleDateString('sv');
+
 
 function App() {
     const [user, setUser] = useState(null);
@@ -209,7 +212,7 @@ function App() {
         const allSessions = allMesocycles.reduce((acc, meso) => {
             return { ...acc, ...(meso.sessions || {}) };
         }, {});
-        return { ...weeklyPlan, ...allSessions };
+        return { ...allSessions, ...weeklyPlan };
     }, [weeklyPlan, allMesocycles]);
 
     const dailyRecommendation = useMemo(() => {
@@ -249,6 +252,14 @@ function App() {
     // Load mesocycles once ready
     useEffect(() => {
         if (ready && user) {
+            // FIREWALL PURGADOR: Si hay basura en el LocalStorage de pruebas anteriores, lo aniquilamos
+            if (!localStorage.getItem('vivo_purged_v54')) {
+                localStorage.removeItem('vivo_weekly_plan_local');
+                localStorage.removeItem('vivo_local_meso_plan_maestro_v5');
+                localStorage.setItem('vivo_purged_v54', 'true');
+                console.log('[Vivo] Purga de base de datos local completada.');
+            }
+
             // Seed Plan Maestro v5.0
             seedPlanMaestroV5().then(() => {
                 getAllMesocycles().then(mesos => {
@@ -316,19 +327,41 @@ function App() {
             }
         });
 
-        // Subscription to Weekly Plan (Shared with Nutriminerals)
-        const planPath = `artifacts/Nutriminerals/users/${SHARED_USER_ID}/data/weekly_plan`;
-        const unsubPlan = onSnapshot(doc(db, planPath), (snap) => {
-            if (snap.exists()) {
-                setWeeklyPlan(snap.data().plan || {});
-            }
-        });
-
         return () => {
             unsubDaily();
-            unsubPlan();
         };
     }, [user, ready]);
+
+    useEffect(() => {
+        const unsub = db ? onSnapshot(doc(db, `artifacts/Nutriminerals/users/${SHARED_USER_ID}/data/weekly_plan`), (snap) => {
+            if (snap.exists()) {
+                const plan = snap.data().plan || {};
+                
+                // HOTFIX: Sábado 21 - El usuario quiere que sea siempre DESCANSO en esta semana.
+                if (plan['2026-03-21']?.title?.toUpperCase().includes('GYM C')) {
+                    console.log('[Vivo] Forzando Sábado 21 a Descanso por petición directa.');
+                    plan['2026-03-21'] = { type: 'Descanso', icon: 'Moon', title: 'DESCANSO TOTAL', tss: 0, durationStr: '—', desc: 'Corregido por petición del usuario.' };
+                }
+
+                // HOTFIX: Martes 24 vs Miércoles 25 - Corregir swap accidental
+                // El usuario reporta que hoy (24) debería ser descanso y mañana (25) SST.
+                if (plan['2026-03-24']?.type === 'Bici' && (plan['2026-03-25']?.type === 'Descanso' || !plan['2026-03-25'])) {
+                    console.log('[Vivo] Corrigiendo swap accidental MAR 24 / MIE 25.');
+                    const sst = plan['2026-03-24'];
+                    plan['2026-03-24'] = { type: 'Descanso', icon: 'Moon', title: 'DESCANSO', tss: 0, durationStr: '—', desc: 'Restablecido (Hoy toca descanso).' };
+                    plan['2026-03-25'] = sst;
+                }
+
+                // HOTFIX: Domingo 22 - Forzar 2h30 si Firebase sigue inyectando la versión vieja
+                if (plan['2026-03-22'] && plan['2026-03-22'].title === 'BICI Z2 LARGA') {
+                    plan['2026-03-22'].durationStr = '2h30';
+                }
+                
+                setWeeklyPlan(plan);
+            }
+        }) : () => {};
+        return unsub;
+    }, [db, SHARED_USER_ID]);
 
     const saveDailyData = useCallback(async (updates) => {
         const today = todayISO();
@@ -383,6 +416,73 @@ function App() {
             console.error('[Vivo] Plan save error:', e);
         }
     }, [weeklyPlan]);
+
+    const handleSwapSessions = useCallback(async (date1, date2) => {
+        if (!date1 || !date2 || date1 === date2) return;
+        
+        console.log(`[Vivo] Swapping ${date1} with ${date2}`);
+
+        const s1Raw = mergedPlan[date1] || getPlannedSession(date1);
+        const s2Raw = mergedPlan[date2] || getPlannedSession(date2);
+        
+        const session1 = JSON.parse(JSON.stringify(s1Raw));
+        const session2 = JSON.parse(JSON.stringify(s2Raw));
+
+        const updatedMesoSessions = { ...(activeMesocycleData?.sessions || {}) };
+        updatedMesoSessions[date1] = session2;
+        updatedMesoSessions[date2] = session1;
+
+        [date1, date2].forEach(date => {
+            const sess = updatedMesoSessions[date];
+            if (!sess) return;
+            const isGym = sess.type === 'Gym' || (sess.title && sess.title.toLowerCase().includes('gym'));
+            if (!isGym) { sess.exercises = []; }
+        });
+
+        setActiveMesocycleData(prev => prev ? { ...prev, sessions: updatedMesoSessions } : prev);
+        setAllMesocycles(prev => prev.map(m => (m.id === (activeMesocycleData?.id || '')) ? { ...m, sessions: updatedMesoSessions } : m));
+        
+        const newWeeklyPlan = { ...weeklyPlan };
+        newWeeklyPlan[date1] = updatedMesoSessions[date1];
+        newWeeklyPlan[date2] = updatedMesoSessions[date2];
+        setWeeklyPlan(newWeeklyPlan);
+
+        if (db) {
+            const planPath = `artifacts/Nutriminerals/users/${SHARED_USER_ID}/data/weekly_plan`;
+            try {
+                await setDoc(doc(db, planPath), { plan: newWeeklyPlan }, { merge: true });
+            } catch (e) { console.error('[Vivo] Error syncing weekly plan:', e); }
+
+            if (activeMesocycleData && activeMesocycleData.id) {
+                const mesoPath = `artifacts/${APP_ID}/users/${SHARED_USER_ID}/mesocycles/${activeMesocycleData.id}`;
+                try {
+                    await setDoc(doc(db, mesoPath), { ...activeMesocycleData, sessions: updatedMesoSessions }, { merge: true });
+                } catch (e) { console.error('[Vivo] Error syncing mesos:', e); }
+            }
+        }
+    }, [weeklyPlan, mergedPlan, activeMesocycleData, db, SHARED_USER_ID, setAllMesocycles]);
+
+    const handleResetWeeklyPlan = useCallback(async () => {
+        if (!activeMesocycleData) return;
+        console.log('[Vivo] Resetting weekly plan to base defaults');
+
+        try {
+            const { PLAN2 } = await import('./services/plan2');
+            const { PLAN } = await import('./services/mesocycleService');
+            const originalPlan = activeMesocycleData.id === 'plan_maestro_v5' ? PLAN2 : PLAN;
+
+            setWeeklyPlan({});
+            setActiveMesocycleData(prev => ({ ...prev, sessions: originalPlan }));
+            setAllMesocycles(prev => prev.map(m => m.id === activeMesocycleData.id ? { ...m, sessions: originalPlan } : m));
+
+            if (db) {
+                const planPath = `artifacts/Nutriminerals/users/${SHARED_USER_ID}/data/weekly_plan`;
+                const mesoPath = `artifacts/${APP_ID}/users/${SHARED_USER_ID}/mesocycles/${activeMesocycleData.id}`;
+                await setDoc(doc(db, planPath), { plan: {} }, { merge: true });
+                await setDoc(doc(db, mesoPath), { ...activeMesocycleData, sessions: originalPlan }, { merge: true });
+            }
+        } catch (e) { console.error('[Vivo] Reset failed:', e); }
+    }, [activeMesocycleData, db, SHARED_USER_ID, setAllMesocycles]);
 
     const [aiError, setAiError] = useState(null);
 
@@ -608,9 +708,9 @@ function App() {
                 );
 
             case 'ai':
-                return <Suspense fallback={<TabFallback />}><AIAnalysis analysis={aiAnalysis} isLoading={aiLoading} onRequestAnalysis={requestAIAnalysis} iea={iea} intervalsData={intervalsData} error={aiError} activeMesocycleData={activeMesocycleData} /></Suspense>;
+                return <Suspense fallback={<TabFallback />}><AIAnalysis analysis={aiAnalysis} isLoading={aiLoading} onRequestAnalysis={requestAIAnalysis} iea={iea} intervalsData={intervalsData} error={aiError} activeMesocycleData={activeMesocycleData} weeklyPlan={mergedPlan} /></Suspense>;
             case 'coach':
-                return <Suspense fallback={<TabFallback />}><CoachHub intervalsData={intervalsData} dailyRecommendation={dailyRecommendation} weeklyPlan={mergedPlan} onUpdatePlan={handleUpdateWeeklyPlan} activeMesocycleData={activeMesocycleData} allMesocycles={allMesocycles} /></Suspense>;
+                return <Suspense fallback={<TabFallback />}><CoachHub intervalsData={intervalsData} dailyRecommendation={dailyRecommendation} weeklyPlan={mergedPlan} onUpdatePlan={handleUpdateWeeklyPlan} onSwapSessions={handleSwapSessions} onResetWeek={handleResetWeeklyPlan} activeMesocycleData={activeMesocycleData} allMesocycles={allMesocycles} /></Suspense>;
             default: return null;
         }
     };
